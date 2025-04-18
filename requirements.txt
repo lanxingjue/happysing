@@ -1,3 +1,5 @@
 PyQt6
 PyAudio 
-numpy # 新增这一行
+numpy 
+librosa
+scipy
