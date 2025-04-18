@@ -1,4 +1,5 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel
+# 添加这一行导入 QApplication
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QApplication # 在原有导入基础上加上 QApplication
 from PyQt6.QtCore import Qt, pyqtSignal
 
 class SongSelectionWidget(QWidget):
@@ -72,6 +73,7 @@ class SongSelectionWidget(QWidget):
 # 如果单独运行此文件，用于测试
 if __name__ == '__main__':
     import sys
+    # 这段代码需要 QApplication 才能运行
     app = QApplication(sys.argv)
     song_select_widget = SongSelectionWidget()
     song_select_widget.show()
