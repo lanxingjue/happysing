@@ -1,8 +1,8 @@
 import os
 import sys
 import json
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMessageBox, QApplication # Import QApplication for testing
-from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QTimer, QByteArray, QBuffer, QTime # Import QTime if needed later for timing
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMessageBox, QApplication
+from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QTimer, QByteArray, QBuffer, QTime
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices, QMediaFormat
 
 import pyaudio
@@ -32,49 +32,61 @@ class LearningWidget(QWidget):
 
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
         self.media_player.errorOccurred.connect(self._on_media_error)
+        # 连接 positionChanged 信号，用于实时同步 (停止播放和可能的实时高亮)
         self.media_player.positionChanged.connect(self._on_position_changed)
 
+
         # --- 音频录制器 ---
-        self.audio = None # Initialize PyAudio later
+        self.audio = None
         self.stream = None
         self.frames = []
         self.is_recording = False
         self.input_device_index = None
 
-        # 初始化 PyAudio 并查找设备 (放在这里可以在窗口创建时就尝试)
         try:
             self.audio = pyaudio.PyAudio()
-            # 使用 get_default_input_device_info() 修复 PyAudio 方法调用错误
-            default_input_device_info = self.audio.get_default_input_device_info()
+            default_input_device_info = self.audio.get_default_input_device_info() # Corrected method name
             self.input_device_index = default_input_device_info.get('index')
             print(f"找到默认音频输入设备: {default_input_device_info.get('name')} (Index: {self.input_device_index})")
         except Exception as e:
             print(f"警告: 未找到默认音频输入设备或列举设备时发生错误: {e}")
             print("录音功能可能无法使用。请检查麦克风设置。")
-            # self.audio 保持 None 状态，或者尝试用 try-finally 确保 terminate
 
         self._record_timer = QTimer(self)
         self._record_timer.timeout.connect(self._read_audio_stream)
-        self._record_start_time = None # Reset start time
+        self._record_start_time = None
 
-        # --- UI 布局 --- (保持不变)
+        # --- 歌曲数据和进度 ---
+        self.current_song_data = None
+        self.current_phrase_index = 0
+        # 存储当前播放乐句的时间信息，供 positionChanged 使用
+        self.current_phrase_start_time_ms = -1
+        self.current_phrase_end_time_ms = -1
+
+        # --- UI 布局 ---
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
 
+        # 1. 歌曲标题区
         self.song_title_label = QLabel("请选择歌曲")
         self.song_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.song_title_label.setStyleSheet("font-size: 28px; font-weight: bold; color: #333;")
         main_layout.addWidget(self.song_title_label)
 
+        # 2. 歌词显示区
         self.lyrics_label = QLabel("...")
         self.lyrics_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lyrics_label.setWordWrap(True)
-        self.lyrics_label.setStyleSheet("font-size: 22px; color: #555; min-height: 80px; border: 1px solid #ddd; padding: 10px; background-color: #f8f8f8; border-radius: 8px;")
+        # **修改此处：设置歌词默认样式和高亮样式**
+        self._default_lyrics_style = "font-size: 22px; color: #555; min-height: 80px; border: 1px solid #ddd; padding: 10px; background-color: #f8f8f8; border-radius: 8px;"
+        self._highlight_lyrics_style = "font-size: 24px; color: #007BFF; font-weight: bold; min-height: 80px; border: 2px solid #007BFF; padding: 10px; background-color: #e0f2ff; border-radius: 8px;" # 蓝色高亮，加粗
+        self.lyrics_label.setStyleSheet(self._default_lyrics_style) # 应用默认样式
         self.lyrics_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(self.lyrics_label)
 
+        # 3. 角色/反馈展示区
         self.feedback_area = QLabel("准备开始...")
         self.feedback_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.feedback_area.setStyleSheet("font-size: 18px; color: #888; min-height: 200px; border: 1px dashed #ccc; background-color: #eee; border-radius: 8px;")
@@ -156,13 +168,12 @@ class LearningWidget(QWidget):
 
         # 初始禁用控制按钮，直到歌曲加载完成，并且麦克风可用
         self._set_control_buttons_enabled(False)
-        # 如果没有找到输入设备，录音按钮应永久禁用
-        if self.input_device_index is None or self.audio is None: # 检查 self.audio 是否成功初始化
+        if self.input_device_index is None or self.audio is None:
              self.record_button.setEnabled(False)
 
 
     def set_song_data(self, song_data):
-        # ... (此方法与 Step 5 相同，更新按钮启用逻辑部分)
+        """设置当前学习歌曲的完整数据"""
         self.current_song_data = song_data
         if not song_data:
             self.song_title_label.setText("加载歌曲失败")
@@ -175,19 +186,18 @@ class LearningWidget(QWidget):
         self.song_title_label.setText(f"歌曲：{song_data.get('title', '未知歌曲')}")
         self.feedback_area.setText("准备开始...")
         self.current_phrase_index = 0
+        self.current_phrase_start_time_ms = -1 # Reset phrase times
+        self.current_phrase_end_time_ms = -1
 
         audio_path = song_data.get('audio_full')
         if audio_path and os.path.exists(audio_path):
             media_content = QUrl.fromLocalFile(os.path.abspath(audio_path))
             self.media_player.setSource(media_content)
             print(f"尝试加载音频: {os.path.abspath(audio_path)}")
-            # 音频加载成功且有输入设备时，启用按钮
-            # 同时检查 self.audio 是否成功初始化
             if self.input_device_index is not None and self.audio is not None:
                 self._set_control_buttons_enabled(True)
-                self.record_button.setEnabled(True) # 明确启用录音按钮
+                self.record_button.setEnabled(True)
             else:
-                 # 没有输入设备或 PyAudio 初始化失败，只能听不能唱
                  self._set_control_buttons_enabled(True)
                  self.record_button.setEnabled(False)
                  if self.input_device_index is None:
@@ -195,8 +205,7 @@ class LearningWidget(QWidget):
                  elif self.audio is None:
                       self.feedback_area.setText("音频系统初始化失败，只能听歌哦！")
 
-
-            self.update_phrase_display()
+            self.update_phrase_display() # Update display to the first phrase
         else:
             self.lyrics_label.setText("...")
             self.feedback_area.setText(f"音频文件未找到: {audio_path}\n请返回选择其他歌曲或检查文件")
@@ -205,20 +214,27 @@ class LearningWidget(QWidget):
             self.record_button.setEnabled(False)
 
     def update_phrase_display(self):
-        # ... (与 Step 5 相同，更新按钮启用逻辑部分)
-        if not self.current_song_data or self.current_phrase_index >= len(self.current_song_data.get('phrases', [])):
+        """根据当前的乐句索引更新歌词显示"""
+        # **修改此处：更新歌词文本和反馈区文本**
+        phrases = self.current_song_data.get('phrases', [])
+        if not self.current_song_data or self.current_phrase_index >= len(phrases):
             self.lyrics_label.setText("歌曲结束或无歌词")
+            self.lyrics_label.setStyleSheet(self._default_lyrics_style) # 恢复默认样式
             self._set_control_buttons_enabled(False)
             self.next_button.setEnabled(False)
             self.record_button.setEnabled(False)
             self.feedback_area.setText("歌曲已结束！你真棒！")
+            # TODO: Trigger song completion logic
             return
 
-        phrase_data = self.current_song_data['phrases'][self.current_phrase_index]
+        phrase_data = phrases[self.current_phrase_index]
         self.lyrics_label.setText(phrase_data.get('text', '...'))
-        self.feedback_area.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(self.current_song_data['phrases'])}\n请听一听 或 我来唱")
-        # 确保按钮状态正确
-        if self.input_device_index is not None and self.audio is not None: # 检查 self.audio
+        self.lyrics_label.setStyleSheet(self._default_lyrics_style) # 确保显示新歌词时是默认样式
+
+        self.feedback_area.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(phrases)}\n请听一听 或 我来唱")
+
+        # Ensure record button state is correct based on mic availability
+        if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         else:
              self.record_button.setEnabled(False)
@@ -227,63 +243,84 @@ class LearningWidget(QWidget):
 
 
     def play_current_phrase(self):
-        # ... (与 Step 5 相同)
+        """播放当前乐句对应的音频片段"""
         if self.is_recording:
-             self.toggle_recording()
+             self.toggle_recording() # Stop recording if active
 
         if not self.media_player.source() or self.media_player.mediaStatus() == QMediaPlayer.MediaStatus.InvalidMedia:
              print("音频未加载或无效，无法播放")
              QMessageBox.warning(self, "播放失败", "歌曲音频加载失败，请检查文件。")
              return
 
-        if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
-            phrase_data = self.current_song_data['phrases'][self.current_phrase_index]
-            start_time_ms = int(phrase_data.get('start_time', 0) * 1000)
-            end_time_ms = int(phrase_data.get('end_time', self.media_player.duration()) * 1000)
+        phrases = self.current_song_data.get('phrases', [])
+        if self.current_song_data and self.current_phrase_index < len(phrases):
+            phrase_data = phrases[self.current_phrase_index]
+            # **修改此处：存储当前乐句的时间信息**
+            self.current_phrase_start_time_ms = int(phrase_data.get('start_time', 0) * 1000)
+            # 使用媒体总时长作为默认结束时间，但检查 duration() 返回的有效性
+            duration_ms = self.media_player.duration()
+            default_end_time_ms = duration_ms if duration_ms > 0 else 10000 # 如果获取不到时长，给个默认值避免问题
+            self.current_phrase_end_time_ms = int(phrase_data.get('end_time', default_end_time_ms / 1000.0) * 1000)
 
+            # 确保结束时间不早于开始时间
+            if self.current_phrase_end_time_ms < self.current_phrase_start_time_ms:
+                 self.current_phrase_end_time_ms = self.current_phrase_start_time_ms + 2000 # 至少播放2秒
+
+            # Ensure player is stopped before setting position and playing
             if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
                 self.media_player.stop()
 
-            self.media_player.setPosition(start_time_ms)
+            self.media_player.setPosition(self.current_phrase_start_time_ms)
             self.media_player.play()
-            print(f"开始播放乐句 {self.current_phrase_index + 1} 从 {start_time_ms}ms 到 {end_time_ms}ms")
+            print(f"开始播放乐句 {self.current_phrase_index + 1} 从 {self.current_phrase_start_time_ms}ms 到 {self.current_phrase_end_time_ms}ms")
 
             self._set_control_buttons_enabled(False)
-            self.record_button.setEnabled(False) # 播放时禁用录音按钮
+            self.record_button.setEnabled(False)
             self.back_button.setEnabled(False)
+
+            # **新增：播放时高亮歌词**
+            self.lyrics_label.setStyleSheet(self._highlight_lyrics_style)
 
 
     def goto_next_phrase(self):
-        # ... (与 Step 5 相同)
+        """前进到下一句乐句"""
         if self.is_recording:
              self.toggle_recording()
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
              self.media_player.stop()
 
-        if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])) - 1:
+        # **新增：切换乐句时取消歌词高亮**
+        self.lyrics_label.setStyleSheet(self._default_lyrics_style)
+        self.current_phrase_start_time_ms = -1 # Reset phrase times
+        self.current_phrase_end_time_ms = -1
+
+
+        phrases = self.current_song_data.get('phrases', [])
+        if self.current_song_data and self.current_phrase_index < len(phrases) - 1:
             self.current_phrase_index += 1
             self.update_phrase_display()
             self._set_control_buttons_enabled(True)
-            # 检查 self.audio 初始化状态
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
                  self.record_button.setEnabled(False)
             self.back_button.setEnabled(True)
             print(f"前进到下一句乐句，索引：{self.current_phrase_index}")
-        elif self.current_song_data and self.current_phrase_index == len(self.current_song_data.get('phrases', [])) - 1:
+        elif self.current_song_data and self.current_phrase_index == len(phrases) - 1:
+            # This is the last phrase, mark song as completed
             print("已是最后一句话，歌曲完成！")
-            self.current_phrase_index += 1
-            self.update_phrase_display()
+            self.current_phrase_index += 1 # Increment to indicate all phrases processed
+            self.update_phrase_display() # Update display to song completion state
             self._set_control_buttons_enabled(False)
             self.next_button.setEnabled(False)
             self.record_button.setEnabled(False)
             self.back_button.setEnabled(True)
+            # TODO: Trigger song completion logic, maybe show a celebration screen
 
+    # --- 录音相关方法 --- (与 Step 5 修复版 v3 相同)
 
     def toggle_recording(self):
         """切换录音状态：开始录音或停止录音"""
-        # 检查 self.audio 初始化状态
         if self.input_device_index is None or self.audio is None:
             QMessageBox.warning(self, "录音失败", "未找到可用的麦克风设备或音频系统未初始化。")
             return
@@ -299,11 +336,14 @@ class LearningWidget(QWidget):
             return
 
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
-            self.media_player.stop()
+            self.media_player.stop() # Stop playback if active
+
+        # **新增：录音时取消歌词高亮**
+        self.lyrics_label.setStyleSheet(self._default_lyrics_style)
+
 
         self.frames = []
         try:
-            # self.audio 是在 __init__ 中初始化的 PyAudio 实例
             self.stream = self.audio.open(format=FORMAT,
                                          channels=CHANNELS,
                                          rate=RATE,
@@ -318,7 +358,7 @@ class LearningWidget(QWidget):
                     font-size: 16px;
                     padding: 10px 20px;
                     border-radius: 8px;
-                    background-color: #E53935; /* 红色 */
+                    background-color: #E53935; /* Red */
                     color: white;
                     border: none;
                     min-width: 120px;
@@ -335,9 +375,7 @@ class LearningWidget(QWidget):
             self.back_button.setEnabled(False)
 
             self.feedback_area.setText("正在录音...")
-            # **修改此处：注释掉或设置为 None，避免错误**
-            # self._record_start_time = self.media_player.getMediaStatus() # This caused error
-            self._record_start_time = None # Or QTime.currentTime() for absolute time if needed later
+            self._record_start_time = None # Reset record start time
 
             self._record_timer.start(int(CHUNK / RATE * 1000))
             print("开始录音...")
@@ -345,10 +383,8 @@ class LearningWidget(QWidget):
         except Exception as e:
             self.is_recording = False
             self.record_button.setText("我来唱 (Record)")
-            # **修改此处：使用 self.button_style 恢复样式**
-            self.record_button.setStyleSheet(self.button_style) # Use the instance attribute
+            self.record_button.setStyleSheet(self.button_style) # Use instance attribute
             self._set_control_buttons_enabled(True)
-            # 检查 self.audio 初始化状态
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
@@ -375,12 +411,9 @@ class LearningWidget(QWidget):
 
         self.is_recording = False
         self.record_button.setText("我来唱 (Record)")
-        # **修改此处：使用 self.button_style 恢复样式，并移除重复定义**
-        self.record_button.setStyleSheet(self.button_style) # Use the instance attribute
-        # REMOVE: Redundant button_style definition here
+        self.record_button.setStyleSheet(self.button_style) # Use instance attribute
 
         self._set_control_buttons_enabled(True)
-        # 检查 self.audio 初始化状态
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         self.back_button.setEnabled(True)
@@ -391,6 +424,7 @@ class LearningWidget(QWidget):
         # TODO: Trigger analysis and feedback here
         # current_phrase = self.current_song_data['phrases'][self.current_phrase_index]
         # self.analyze_and_provide_feedback(self.frames, current_phrase)
+
 
     def _read_audio_stream(self):
         # ... (与 Step 5 相同)
@@ -418,30 +452,41 @@ class LearningWidget(QWidget):
         self.next_button.setEnabled(enabled)
         # self.record_button 的 enabled 状态由 toggle_recording 和 set_song_data 管理
 
-    # --- 保留 Step 4 的其他槽函数和关闭事件 ---
+
+    # --- 播放相关槽函数 ---
 
     def _on_playback_state_changed(self, state):
-        # ... (与 Step 5 相同，注意在播放停止后重新启用按钮时，检查 self.audio 初始化状态)
+        """处理媒体播放状态变化"""
+        # **修改此处：播放停止时取消歌词高亮**
+        # Qt6 的 PlaybackState 有 PlayingState, PausedState, StoppedState
         print(f"播放状态变化: {state}")
         if state == QMediaPlayer.PlaybackState.StoppedState:
              print("播放已停止")
+             # 取消歌词高亮
+             self.lyrics_label.setStyleSheet(self._default_lyrics_style)
+             self.current_phrase_start_time_ms = -1 # Reset phrase times
+             self.current_phrase_end_time_ms = -1
+
+             # 只有在没有录音的时候才重新启用控制按钮（录音按钮本身除外）
              if not self.is_recording:
                 self._set_control_buttons_enabled(True)
-                # 检查 self.audio 初始化状态
                 if self.input_device_index is not None and self.audio is not None:
                      self.record_button.setEnabled(True)
                 else:
                      self.record_button.setEnabled(False)
                 self.back_button.setEnabled(True)
 
+
     def _on_position_changed(self, position):
-        # ... (与 Step 5 相同)
-        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState and self.current_song_data:
-             phrase_data = self.current_song_data['phrases'][self.current_phrase_index]
-             end_time_ms = int(phrase_data.get('end_time', self.media_player.duration()) * 1000)
-             if position >= end_time_ms and end_time_ms > 0:
+        """监听播放位置变化，用于在乐句结束时停止播放"""
+        # **修改此处：使用存储的当前乐句结束时间来判断是否停止**
+        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState and self.current_phrase_end_time_ms != -1:
+             # 如果当前播放位置超过了当前乐句的结束时间，就停止播放
+             if position >= self.current_phrase_end_time_ms:
                  self.media_player.stop()
-                 print(f"在 {position}ms 停止播放，超过乐句结束时间 {end_time_ms}ms")
+                 print(f"在 {position}ms 停止播放，超过乐句结束时间 {self.current_phrase_end_time_ms}ms")
+                 # stop() 会触发 playbackStateChanged 信号，在那里处理按钮启用和高亮重置
+
 
     def _on_media_error(self, error, error_string):
          # ... (与 Step 5 相同)
@@ -449,7 +494,7 @@ class LearningWidget(QWidget):
          self.feedback_area.setText(f"音频播放错误: {error_string}")
          QMessageBox.critical(self, "音频错误", f"播放音频时发生错误：{error_string}")
          self._set_control_buttons_enabled(False)
-         self.record_button.setEnabled(False) # 播放错误也禁用录音
+         self.record_button.setEnabled(False)
 
 
     def closeEvent(self, event):
@@ -459,8 +504,6 @@ class LearningWidget(QWidget):
         if self.is_recording:
             self.stop_recording()
 
-        # Release PyAudio resource
-        # Check if self.audio was successfully initialized before terminating
         if hasattr(self, 'audio') and self.audio:
              try:
                 self.audio.terminate()
@@ -476,30 +519,28 @@ class LearningWidget(QWidget):
 if __name__ == '__main__':
     import sys
     from PyQt6.QtWidgets import QApplication
-    import os # Import os for file existence check
+    import os
 
     app = QApplication(sys.argv)
 
-    # Simulate song data
+    # Simulate song data (ensure the audio file exists and times match)
+    test_audio_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio', 'pawpatrol_full.wav')
     test_song_data = {
-        "id": "test_song_record",
-        "title": "测试录音歌曲",
-        # Use a dummy path if the file doesn't exist, or ensure it does
-        "audio_full": os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio', 'pawpatrol_full.wav'), # Use relative path for testing
+        "id": "test_song_lyrics",
+        "title": "测试歌词同步歌曲",
+        "audio_full": test_audio_path,
         "audio_karaoke": None,
-        "lyrics": "这是第一句测试歌词\n这是第二句测试歌词",
+        "lyrics": "一句歌词在这里\n另一句在后面",
         "phrases": [
-          {"text": "这是第一句测试歌词", "start_time": 0.0, "end_time": 3.0},
-          {"text": "这是第二句测试歌词", "start_time": 3.5, "end_time": 6.5}
+          {"text": "一句歌词在这里", "start_time": 0.0, "end_time": 2.0}, # Adjust times to match your test audio
+          {"text": "另一句在后面", "start_time": 2.5, "end_time": 5.0}
         ],
         "unlocked": True
     }
 
-    # Check for a potentially existing audio file for better testing
     if not os.path.exists(test_song_data["audio_full"]):
          print(f"Test audio {test_song_data['audio_full']} not found. Playback will not work.")
-         test_song_data["audio_full"] = None
-
+         test_song_data["audio_full"] = None # Set to None if file missing
 
     learning_widget = LearningWidget()
     learning_widget.set_song_data(test_song_data)
