@@ -9,24 +9,24 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices, QMedia
 
 import pyaudio
 import numpy as np
-import librosa # 导入 librosa
-import scipy.signal # librosa 可能依赖 scipy.signal，虽然通常 librosa 会自带，但明确导入更安全
+import librosa
+import scipy.signal
+# **新增导入：导入 librosa.onset 模块**
+from librosa import onset # Or import librosa.onset
 
-# Define audio parameters (保持与 Step 7 相同，这些是 PyAudio 的参数)
+
+# Define audio parameters (保持不变)
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
-RATE = 16000 # Sample rate for recording
-CHUNK = 1024 # PyAudio buffer size
+RATE = 16000
+CHUNK = 1024
 RECORD_SECONDS_MAX = 15
 
-# Define parameters for librosa analysis
-# Frame length and hop length often relate to sample rate.
-# A frame length of 2048 samples at 16kHz is about 128ms, reasonable for pitch analysis.
-# Hop length determines overlap.
+# Define parameters for librosa analysis (保持不变，这些也用于 Onset 检测)
 LIBROSA_FRAME_LENGTH = 2048
-LIBROSA_HOP_LENGTH = 512 # Typically power of 2, smaller than frame_length
+LIBROSA_HOP_LENGTH = 512
 
-# Define base path for assets (保持与 Step 8 相同)
+# Define base path for assets (保持不变)
 ASSETS_BASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'assets')
 
 class LearningWidget(QWidget):
@@ -69,9 +69,8 @@ class LearningWidget(QWidget):
         self._record_timer.timeout.connect(self._read_audio_stream)
         self._record_start_time = None
 
-        # --- 音频分析器 --- (不再需要 Aubio 初始化)
-        # self.pitch_detector = None # Remove this
-        # No specific initialization needed for librosa pitch detection here
+        # --- 音频分析器 --- (保持不变)
+        # No specific initialization needed for librosa pitch/onset detection here
 
 
         # --- 歌曲数据和进度 --- (保持不变)
@@ -212,15 +211,14 @@ class LearningWidget(QWidget):
 
         # 初始禁用控制按钮，直到歌曲加载完成，并且麦克风可用
         self._set_control_buttons_enabled(False)
-        # **修改此处：检查 PyAudio 是否初始化成功来启用录音按钮 (不再检查 Aubio)**
+        # Check PyAudio initialization for enabling record button
         if self.input_device_index is None or self.audio is None:
              self.record_button.setEnabled(False)
-
 
         self.update_star_display()
 
 
-    # --- 歌曲数据与UI更新 --- (修改 set_song_data 和 update_phrase_display 中的录音按钮启用逻辑)
+    # --- 歌曲数据与UI更新 --- (保持不变)
 
     def set_song_data(self, song_data):
         """设置当前学习歌曲的完整数据"""
@@ -256,14 +254,14 @@ class LearningWidget(QWidget):
             media_content = QUrl.fromLocalFile(os.path.abspath(audio_path))
             self.media_player.setSource(media_content)
             print(f"尝试加载音频: {os.path.abspath(audio_path)}")
-            # **修改此处：检查 PyAudio 是否初始化成功来启用录音按钮 (不再检查 Aubio)**
+            # Check PyAudio initialization for enabling record button
             if self.input_device_index is not None and self.audio is not None:
                 self._set_control_buttons_enabled(True)
-                self.record_button.setEnabled(True) # 明确启用录音按钮
+                self.record_button.setEnabled(True)
             else:
-                 # 无法录音但可以听
-                 self._set_control_buttons_enabled(True) # 启用听和下一句
-                 self.record_button.setEnabled(False) # 禁用录音按钮
+                 # Can't record but can listen
+                 self._set_control_buttons_enabled(True)
+                 self.record_button.setEnabled(False)
                  if self.input_device_index is None:
                       self.feedback_text_label.setText("未找到麦克风，只能听歌哦！")
                  elif self.audio is None:
@@ -298,7 +296,7 @@ class LearningWidget(QWidget):
                          pixmap = QPixmap(image_path)
                          if not pixmap.isNull():
                               self._character_pixmaps[char_name] = pixmap
-                              print(f"  - 加载 {char_file} 成功 ({char_name})")
+                              print(f"  - 加载 {char_file}成功 ({char_name})")
                          else:
                               print(f"  - 加载 {char_file} 失败 (文件可能损坏)")
                      except Exception as e:
@@ -318,7 +316,7 @@ class LearningWidget(QWidget):
             self.lyrics_label.setStyleSheet(self._default_lyrics_style)
             self._set_control_buttons_enabled(False)
             self.next_button.setEnabled(False)
-            self.record_button.setEnabled(False) # 歌曲结束，录音禁用
+            self.record_button.setEnabled(False)
             self.feedback_text_label.setText("歌曲已结束！你真棒！")
             self.character_image_label.clear()
             return
@@ -330,7 +328,7 @@ class LearningWidget(QWidget):
         self.feedback_text_label.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(phrases)}\n请听一听 或 我来唱")
         self.character_image_label.clear()
 
-        # **修改此处：检查 PyAudio 是否初始化成功来启用录音按钮 (不再检查 Aubio)**
+        # Check PyAudio initialization for enabling record button
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         else:
@@ -401,7 +399,7 @@ class LearningWidget(QWidget):
             self.current_phrase_index += 1
             self.update_phrase_display()
             self._set_control_buttons_enabled(True)
-            # **修改此处：检查 PyAudio 是否初始化成功来启用录音按钮 (不再检查 Aubio)**
+            # Check PyAudio initialization for enabling record button
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
@@ -418,10 +416,10 @@ class LearningWidget(QWidget):
             self.back_button.setEnabled(True)
 
 
-    # --- 录音相关方法 --- (修改 toggle_recording, start_recording, stop_recording 中的录音按钮启用逻辑)
+    # --- 录音相关方法 --- (修改 start_recording, stop_recording 中的录音按钮启用逻辑)
 
     def toggle_recording(self):
-        # **修改此处：检查 PyAudio 初始化状态 (不再检查 Aubio)**
+        # Check PyAudio initialization
         if self.input_device_index is None or self.audio is None:
             QMessageBox.warning(self, "录音失败", "未找到可用的麦克风设备或音频系统未初始化。")
             return
@@ -484,7 +482,7 @@ class LearningWidget(QWidget):
             self.record_button.setText("我来唱 (Record)")
             self.record_button.setStyleSheet(self.button_style)
             self._set_control_buttons_enabled(True)
-            # **修改此处：检查 PyAudio 初始化状态 (不再检查 Aubio)**
+            # Check PyAudio initialization
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
@@ -514,7 +512,7 @@ class LearningWidget(QWidget):
         self.record_button.setStyleSheet(self.button_style)
 
         self._set_control_buttons_enabled(True)
-        # **修改此处：检查 PyAudio 初始化状态 (不再检查 Aubio)**
+        # Check PyAudio initialization
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         else:
@@ -551,10 +549,10 @@ class LearningWidget(QWidget):
         self.next_button.setEnabled(enabled)
 
 
-    # --- 修改音频分析和反馈方法 --- (使用 librosa 进行音高分析)
+    # --- 修改音频分析和反馈方法 --- (新增节奏分析并更新反馈逻辑)
 
     def analyze_and_provide_feedback(self, audio_frames):
-        """分析录制的音频帧 (能量和音高) 并提供反馈 (结合角色图片)"""
+        """分析录制的音频帧 (能量, 音高, 节奏) 并提供反馈 (结合角色图片)"""
         if not audio_frames:
             self.feedback_text_label.setText("没有录到声音，再试一次？")
             self.character_image_label.clear()
@@ -563,61 +561,70 @@ class LearningWidget(QWidget):
 
         try:
             audio_data_bytes = b''.join(audio_frames)
-            # Convert bytes to float32 numpy array for librosa/analysis
             audio_data_np_int16 = np.frombuffer(audio_data_bytes, dtype=np.int16)
-            # Normalize int16 to float32 range [-1.0, 1.0]
             audio_data_np_float32 = audio_data_np_int16.astype(np.float32) / 32768.0
 
 
-            # --- 音量分析 (RMS) --- (与 Step 8 相同)
+            # --- 音量分析 (RMS) --- (保持不变)
             rms_energy = 0
             if audio_data_np_float32.size > 0:
                 rms_energy = np.sqrt(np.mean(np.square(audio_data_np_float32)))
             print(f"录音音频 RMS 能量 (float32): {rms_energy}")
 
 
-            # --- 音高分析 (使用 librosa) --- (新增)
-            # librosa.pyin is good for monophonic sources like voice
-            # fmin and fmax define the pitch search range (similar to Aubio)
-            # sr is the sample rate
-            # frame_length and hop_length control the analysis window
+            # --- 音高分析 (使用 librosa) --- (保持不变)
             try:
-                 # librosa.pyin returns pitch contour (f0) and voicing flag (voiced)
                  f0, voiced_flag, voiced_probabilities = librosa.pyin(
                      y=audio_data_np_float32,
-                     fmin=librosa.note_to_hz('C2'), # ~65 Hz, common lower limit for voice
-                     fmax=librosa.note_to_hz('C6'), # ~1047 Hz, upper limit (adjust as needed for child voice)
+                     fmin=librosa.note_to_hz('C2'),
+                     fmax=librosa.note_to_hz('C6'),
                      sr=RATE,
                      frame_length=LIBROSA_FRAME_LENGTH,
                      hop_length=LIBROSA_HOP_LENGTH
                  )
-                 # f0 contains estimated pitch in Hz for voiced segments, 0 for unvoiced
-                 # voiced_flag is boolean, True where voice was detected
-
-                 # Analyze pitch detection results
-                 # Count frames where voice was detected (voiced_flag is True)
                  voiced_frames_count = np.sum(voiced_flag)
                  total_frames = len(voiced_flag)
-                 # Consider pitch detected if voiced_flag is True for a significant portion of time
-                 # Threshold needs tuning (e.g., 20% or 30% of frames)
                  pitch_detected_percentage = (voiced_frames_count / total_frames) * 100 if total_frames > 0 else 0
-
-                 print(f"Voiced frames percentage: {pitch_detected_percentage:.2f}%")
-                 # Simple check: is pitch detected reasonably consistently?
                  has_discernible_pitch = pitch_detected_percentage > 20 # Example threshold
 
-                 # Can also look at average pitch if desired: np.mean(f0[voiced_flag])
-
+                 print(f"Voiced frames percentage: {pitch_detected_percentage:.2f}%")
 
             except Exception as e:
                 print(f"Librosa pitch analysis failed: {e}")
                 has_discernible_pitch = False # Assume no pitch detected on failure
-                # Fallback to volume-only feedback if pitch analysis fails
-                self._analyze_volume_only_feedback(audio_frames)
-                return
 
 
-            # --- 综合反馈逻辑 --- (结合能量和音高) - Logic similar to Step 9 with Aubio, adjust thresholds for float32 RMS
+            # --- 节奏分析 (使用 librosa.onset) --- (新增)
+            try:
+                 # Detect onsets. The onset envelope is first computed, then peak picking.
+                 # hop_length should be smaller than frame_length for onset detection.
+                 # We can use a standard onset detection method like 'hfc' (High Frequency Content).
+                 # The result `onsets` is an array of frame indices where onsets were detected.
+                 onset_frames = onset.onset_detect(y=audio_data_np_float32, sr=RATE,
+                                                   hop_length=LIBROSA_HOP_LENGTH,
+                                                   # Optional: increase peak_perc to detect stronger onsets
+                                                   # peak_perc=50,
+                                                   # Optional: adjust pre_avg/post_avg for smoothing onset strength curve
+                                                   # pre_avg=3, post_avg=3
+                                                   )
+
+                 num_onsets = len(onset_frames)
+                 print(f"检测到 {num_onsets} 个声音起始点 (Onsets)")
+
+                 # Simple check: is a reasonable number of onsets detected for the phrase duration?
+                 # The expected number of onsets depends on the song's rhythm and child's singing speed.
+                 # For a rough check, let's say more than N onsets indicates some attempt at rhythm.
+                 # N could be 2 or 3 for a short phrase.
+                 rhythm_onset_threshold = 2 # Example threshold: need at least 2 onsets
+                 has_discernible_rhythm = num_onsets >= rhythm_onset_threshold
+
+
+            except Exception as e:
+                print(f"Librosa onset analysis failed: {e}")
+                has_discernible_rhythm = False # Assume no rhythm detected on failure
+
+
+            # --- 综合反馈逻辑 --- (结合能量, 音高, 和节奏)
             feedback_message = "分析完成。"
             selected_character_name = None
 
@@ -626,33 +633,40 @@ class LearningWidget(QWidget):
             rms_medium_threshold = 0.01
             rms_loud_threshold = 0.1
 
+            # Determine overall performance category
+            is_loud_enough = rms_energy > rms_medium_threshold
+            is_pitched = has_discernible_pitch
+            is_rhythmic = has_discernible_rhythm # Based on simple onset count
+
             if rms_energy < rms_quiet_threshold * 0.5: # Very quiet, likely no sound
                  feedback_message = "没有听到你的声音哦，再靠近麦克风一点试试？"
                  selected_character_name = 'chase' # Needs encouragement
-            elif has_discernible_pitch: # Pitch detected by librosa
-                 if rms_energy > rms_loud_threshold:
-                      feedback_message = "哇！你唱得又响亮又有音调！太棒了！"
-                      selected_character_name = 'marshall' # Energetic
-                 elif rms_energy > rms_medium_threshold:
-                      feedback_message = "你的声音很好听！旋律唱得很棒哦！"
-                      selected_character_name = 'skye' # Nice melody
-                 elif rms_energy > rms_quiet_threshold:
-                      feedback_message = "虽然声音小小的，但唱得很有音调呢！轻轻地唱也很棒！"
-                      selected_character_name = 'chase' # Gentle and musical
-                 else: # Very quiet but somehow detected pitch (rare)
-                      feedback_message = "好像听到你的歌声啦，声音再大一点就更清楚了！"
-                      selected_character_name = 'chase'
-            else: # No discernible pitch detected
-                 if rms_energy > rms_loud_threshold:
-                      feedback_message = "好有活力！是在大声说话还是唱歌呀？再试试把声音变成唱歌的声音？"
-                      selected_character_name = 'marshall'
-                 elif rms_energy > rms_quiet_threshold:
-                      feedback_message = "你发出声音啦！很棒！唱歌是像说话一样，但要拉长声音哦，可以再试试听一听原唱。"
-                      selected_character_name = 'chase'
-                 else: # Minimal sound and no pitch
-                      feedback_message = "你尝试啦，很棒！如果想唱歌，要发出声音哦，再试试看？"
-                      selected_character_name = 'chase'
-
+            elif not is_loud_enough: # Some sound, but quiet
+                if is_pitched and is_rhythmic:
+                     feedback_message = "你唱得很棒！声音小小的也很动听呢！"
+                     selected_character_name = 'skye' # Gentle singer
+                elif is_pitched:
+                     feedback_message = "声音小小的，但是有音调哦！再大声一点试试看？"
+                     selected_character_name = 'chase' # Encourage volume
+                elif is_rhythmic:
+                     feedback_message = "声音小小的，但跟着节奏点发声啦！很棒！"
+                     selected_character_name = 'marshall' # Acknowledge rhythm attempt
+                else: # Quiet, no clear pitch or rhythm
+                     feedback_message = "你发声啦！很棒的尝试！声音再大一点就更清楚了！"
+                     selected_character_name = 'chase' # General encouragement
+            elif is_loud_enough: # Good volume
+                 if is_pitched and is_rhythmic:
+                      feedback_message = "太棒了！你唱得又响亮、又有音调、还有节奏感！真是一位小歌星！"
+                      selected_character_name = 'marshall' # Full marks!
+                 elif is_pitched:
+                      feedback_message = "声音响亮，旋律也很棒！再试试跟着歌曲的节奏一起唱？"
+                      selected_character_name = 'skye' # Good pitch/volume, encourage rhythm
+                 elif is_rhythmic:
+                      feedback_message = "声音响亮，而且发声很有节奏感！再试试唱出歌曲的旋律？"
+                      selected_character_name = 'marshall' # Good rhythm/volume, encourage pitch
+                 else: # Loud, but no clear pitch or rhythm (maybe shouting, talking, sustained note without pitch detection)
+                      feedback_message = "声音好洪亮！很棒的尝试！唱歌的时候，试着发出有长短、有高低的声音哦！"
+                      selected_character_name = 'marshall' # Acknowledge volume, guide towards singing
 
             # Display character image
             if selected_character_name and selected_character_name in self._character_pixmaps:
@@ -667,12 +681,12 @@ class LearningWidget(QWidget):
             print(f"音频分析失败: {e}")
             self.feedback_text_label.setText("分析声音时遇到问题...")
             self.character_image_label.clear()
-            # Fallback to just volume analysis feedback if anything goes wrong in the main analysis block
+            # Fallback to just volume analysis if anything goes wrong in the main analysis block
             self._analyze_volume_only_feedback(audio_frames)
 
 
     def _analyze_volume_only_feedback(self, audio_frames):
-        """Fallback analysis if pitch detection is not available or fails"""
+        """Fallback analysis if pitch or rhythm detection fails"""
         print("Using fallback volume analysis.")
         if not audio_frames:
              self.feedback_text_label.setText("没有录到声音，再试一次？")
@@ -720,7 +734,6 @@ class LearningWidget(QWidget):
     # --- 播放相关槽函数 --- (保持不变)
 
     def _on_playback_state_changed(self, state):
-        # ... (修改录音按钮启用逻辑)
         print(f"播放状态变化: {state}")
         if state == QMediaPlayer.PlaybackState.StoppedState:
              print("播放已停止")
@@ -730,7 +743,6 @@ class LearningWidget(QWidget):
 
              if not self.is_recording:
                 self._set_control_buttons_enabled(True)
-                # **修改此处：检查 PyAudio 初始化状态 (不再检查 Aubio)**
                 if self.input_device_index is not None and self.audio is not None:
                      self.record_button.setEnabled(True)
                 else:
@@ -777,20 +789,21 @@ if __name__ == '__main__':
     import sys
     from PyQt6.QtWidgets import QApplication
     import os
+    from PIL import Image # Import PIL for creating dummy images
 
     app = QApplication(sys.argv)
 
     # Simulate song data (ensure the audio file and images exist)
     test_audio_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio', 'pawpatrol_full.wav')
     test_song_data = {
-        "id": "test_song_pitch",
-        "title": "测试音高分析歌曲",
+        "id": "test_song_rhythm",
+        "title": "测试节奏分析歌曲",
         "theme": "pawpatrol", # Specify theme
         "audio_full": test_audio_path,
         "audio_karaoke": None,
-        "lyrics": "测试音高分析功能",
+        "lyrics": "测试节奏分析功能",
         "phrases": [
-          {"text": "测试音高分析功能", "start_time": 0.0, "end_time": 5.0} # Use a longer time for pitch testing
+          {"text": "测试节奏分析功能", "start_time": 0.0, "end_time": 5.0} # Use a longer time for testing
         ],
         "unlocked": True
     }
@@ -806,23 +819,20 @@ if __name__ == '__main__':
 
     if not os.path.isdir(test_theme_image_dir) or not images_found:
          print(f"Warning: Required test character images for theme '{test_song_data['theme']}' not found in {test_theme_image_dir}. Character images won't display correctly.")
-         # Create dummy files if missing to avoid QPixmap errors, or handle QPixmap(path).isNull()
+         # Create dummy files if missing to avoid QPixmap errors
          if not os.path.isdir(test_theme_image_dir):
              os.makedirs(test_theme_image_dir, exist_ok=True)
          for img_name in required_images:
              dummy_path = os.path.join(test_theme_image_dir, img_name)
              if not os.path.exists(dummy_path):
                  try:
-                    # Create a tiny placeholder file
-                    from PIL import Image
-                    dummy_img = Image.new('RGB', (1, 1), color = 'red')
+                    dummy_img = Image.new('RGB', (100, 100), color = 'red') # Create slightly larger dummy
                     dummy_img.save(dummy_path)
                     print(f"Created dummy image: {dummy_path}")
                  except ImportError:
                     print(f"Pillow not installed, cannot create dummy image {dummy_path}. QPixmap might fail.")
-                    # Create an empty file as a last resort
                     with open(dummy_path, 'w') as f:
-                         pass # Create empty file
+                         pass
 
 
     learning_widget = LearningWidget()
