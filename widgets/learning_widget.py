@@ -1,19 +1,24 @@
 import os
 import sys
 import json
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QMessageBox, QApplication
+from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+                             QSizePolicy, QMessageBox, QApplication, QFrame)
 from PyQt6.QtCore import Qt, pyqtSignal, QUrl, QTimer, QByteArray, QBuffer, QTime
+from PyQt6.QtGui import QPixmap
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices, QMediaFormat
 
 import pyaudio
-import numpy as np # 导入 NumPy
+import numpy as np
 
-# Define audio parameters (保持与 Step 5 相同)
+# Define audio parameters
 FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000
 CHUNK = 1024
 RECORD_SECONDS_MAX = 15
+
+# Define base path for assets
+ASSETS_BASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'assets')
 
 class LearningWidget(QWidget):
     back_to_select = pyqtSignal()
@@ -21,7 +26,7 @@ class LearningWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # --- 音频播放器 --- (保持与 Step 6 相同)
+        # --- 音频播放器 --- (保持不变)
         self.media_player = QMediaPlayer()
         output_device = QMediaDevices.defaultAudioOutput()
         if not output_device:
@@ -35,7 +40,7 @@ class LearningWidget(QWidget):
         self.media_player.errorOccurred.connect(self._on_media_error)
         self.media_player.positionChanged.connect(self._on_position_changed)
 
-        # --- 音频录制器 --- (保持与 Step 6 修复版 v3 相同)
+        # --- 音频录制器 --- (保持不变)
         self.audio = None
         self.stream = None
         self.frames = []
@@ -44,7 +49,7 @@ class LearningWidget(QWidget):
 
         try:
             self.audio = pyaudio.PyAudio()
-            default_input_device_info = self.audio.get_default_input_device_info() # Corrected method name
+            default_input_device_info = self.audio.get_default_input_device_info()
             self.input_device_index = default_input_device_info.get('index')
             print(f"找到默认音频输入设备: {default_input_device_info.get('name')} (Index: {self.input_device_index})")
         except Exception as e:
@@ -55,23 +60,43 @@ class LearningWidget(QWidget):
         self._record_timer.timeout.connect(self._read_audio_stream)
         self._record_start_time = None
 
-        # --- 歌曲数据和进度 --- (保持与 Step 6 相同)
+        # --- 歌曲数据和进度 --- (保持不变)
         self.current_song_data = None
         self.current_phrase_index = 0
         self.current_phrase_start_time_ms = -1
         self.current_phrase_end_time_ms = -1
 
-        # --- UI 布局 --- (保持与 Step 6 相同)
+        # --- 游戏化元素 --- (新增并初始化星星标签)
+        self.total_stars = 0
+        self.star_label = QLabel("⭐ 0") # 初始化 star_label
+        self.star_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFD700;")
+
+        self._character_pixmaps = {}
+        self._current_theme = None
+
+        # --- UI 布局 ---
         main_layout = QVBoxLayout(self)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(15)
 
-        self.song_title_label = QLabel("请选择歌曲")
+        # **修改此处：在 top_layout 之前初始化 song_title_label**
+        self.song_title_label = QLabel("请选择歌曲") # 初始化 song_title_label
         self.song_title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.song_title_label.setStyleSheet("font-size: 28px; font-weight: bold; color: #333;")
-        main_layout.addWidget(self.song_title_label)
 
+
+        # 1. 顶部区域：歌曲标题和星星 (现在可以安全地添加 widget 了)
+        top_layout = QHBoxLayout()
+        top_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
+        top_layout.addStretch()
+        top_layout.addWidget(self.song_title_label) # song_title_label 已初始化
+        top_layout.addStretch()
+        top_layout.addWidget(self.star_label) # star_label 已初始化
+        main_layout.addLayout(top_layout)
+
+
+        # 2. 歌词显示区 (保持不变)
         self.lyrics_label = QLabel("...")
         self.lyrics_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lyrics_label.setWordWrap(True)
@@ -81,13 +106,28 @@ class LearningWidget(QWidget):
         self.lyrics_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         main_layout.addWidget(self.lyrics_label)
 
-        self.feedback_area = QLabel("准备开始...")
-        self.feedback_area.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.feedback_area.setStyleSheet("font-size: 18px; color: #888; min-height: 200px; border: 1px dashed #ccc; background-color: #eee; border-radius: 8px;")
-        self.feedback_area.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        main_layout.addWidget(self.feedback_area)
+        # 3. 角色/反馈展示区 (保持不变)
+        self.feedback_widget = QWidget()
+        self.feedback_layout = QHBoxLayout(self.feedback_widget)
+        self.feedback_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.feedback_layout.setSpacing(20)
 
-        # 4. 控制按钮区
+        self.character_image_label = QLabel()
+        self.character_image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.character_image_label.setFixedSize(150, 150)
+        self.character_image_label.setScaledContents(True)
+        self.feedback_layout.addWidget(self.character_image_label)
+
+        self.feedback_text_label = QLabel("准备开始...")
+        self.feedback_text_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.feedback_text_label.setWordWrap(True)
+        self.feedback_text_label.setStyleSheet("font-size: 18px; color: #333;")
+        self.feedback_layout.addWidget(self.feedback_text_label)
+
+        main_layout.addWidget(self.feedback_widget)
+
+
+        # 4. 控制按钮区 (保持不变)
         control_layout = QHBoxLayout()
         control_layout.setAlignment(Qt.AlignmentFlag.AlignHCenter)
 
@@ -95,13 +135,12 @@ class LearningWidget(QWidget):
         self.record_button = QPushButton("我来唱 (Record)")
         self.next_button = QPushButton("下一句 (Next)")
 
-        # **修改此处：将 button_style 存储为实例属性** (Step 5 修复)
         self.button_style = """
             QPushButton {
                 font-size: 16px;
                 padding: 10px 20px;
                 border-radius: 8px;
-                background-color: #FF9800; /* 橙色 */
+                background-color: #FF9800; /* Orange */
                 color: white;
                 border: none;
                 min-width: 120px;
@@ -127,14 +166,14 @@ class LearningWidget(QWidget):
 
         main_layout.addLayout(control_layout)
 
-        # 5. 返回按钮
+        # 5. 返回按钮 (保持不变)
         self.back_button = QPushButton("返回选择歌曲")
         self.back_button.setStyleSheet("""
             QPushButton {
                 font-size: 14px;
                 padding: 8px 15px;
                 border-radius: 5px;
-                background-color: #9E9E9E; /* 灰色 */
+                background-color: #9E9E9E; /* Gray */
                 color: white;
                 border: none;
                 margin-top: 20px;
@@ -155,7 +194,7 @@ class LearningWidget(QWidget):
 
         self.setLayout(main_layout)
 
-        # --- 连接按钮信号到槽函数 ---
+        # --- 连接按钮信号到槽函数 --- (保持不变)
         self.listen_button.clicked.connect(self.play_current_phrase)
         self.record_button.clicked.connect(self.toggle_recording)
         self.next_button.clicked.connect(self.goto_next_phrase)
@@ -165,24 +204,39 @@ class LearningWidget(QWidget):
         if self.input_device_index is None or self.audio is None:
              self.record_button.setEnabled(False)
 
+        self.update_star_display() # Initial display
 
-    # --- 歌曲数据与UI更新 --- (保持与 Step 6 相同)
+
+    # --- 歌曲数据与UI更新 --- (保持不变)
 
     def set_song_data(self, song_data):
+        """设置当前学习歌曲的完整数据"""
         self.current_song_data = song_data
         if not song_data:
             self.song_title_label.setText("加载歌曲失败")
             self.lyrics_label.setText("...")
-            self.feedback_area.setText("请返回重新选择歌曲")
+            self.feedback_text_label.setText("请返回重新选择歌曲")
+            self.character_image_label.clear()
             self._set_control_buttons_enabled(False)
             self.record_button.setEnabled(False)
             return
 
         self.song_title_label.setText(f"歌曲：{song_data.get('title', '未知歌曲')}")
-        self.feedback_area.setText("准备开始...")
+        self.feedback_text_label.setText("准备开始...")
         self.current_phrase_index = 0
         self.current_phrase_start_time_ms = -1
         self.current_phrase_end_time_ms = -1
+
+        theme = song_data.get('theme')
+        if theme and theme != self._current_theme:
+             self._load_character_images(theme)
+             self._current_theme = theme
+        elif not theme:
+             self._character_pixmaps = {}
+             self._current_theme = None
+
+        self.character_image_label.clear()
+
 
         audio_path = song_data.get('audio_full')
         if audio_path and os.path.exists(audio_path):
@@ -196,19 +250,56 @@ class LearningWidget(QWidget):
                  self._set_control_buttons_enabled(True)
                  self.record_button.setEnabled(False)
                  if self.input_device_index is None:
-                      self.feedback_area.setText("未找到麦克风，只能听歌哦！")
+                      self.feedback_text_label.setText("未找到麦克风，只能听歌哦！")
                  elif self.audio is None:
-                      self.feedback_area.setText("音频系统初始化失败，只能听歌哦！")
+                      self.feedback_text_label.setText("音频系统初始化失败，只能听歌哦！")
+
 
             self.update_phrase_display()
         else:
             self.lyrics_label.setText("...")
-            self.feedback_area.setText(f"音频文件未找到: {audio_path}\n请返回选择其他歌曲或检查文件")
+            self.feedback_text_label.setText(f"音频文件未找到: {audio_path}\n请返回选择其他歌曲或检查文件")
+            self.character_image_label.clear()
             print(f"错误: 音频文件未找到或路径无效: {audio_path}")
             self._set_control_buttons_enabled(False)
             self.record_button.setEnabled(False)
 
+    def _load_character_images(self, theme):
+        """加载指定主题的角色图片"""
+        self._character_pixmaps = {}
+        theme_image_dir = os.path.join(ASSETS_BASE_PATH, 'images', theme)
+        if os.path.isdir(theme_image_dir):
+             print(f"加载主题 '{theme}' 的角色图片...")
+             # This mapping should ideally be in a config/data file, but hardcoding for now
+             character_files = {
+                 'pawpatrol': ['chase.png', 'marshall.png', 'skye.png'],
+                 # Add other themes here: 'rabrador': ['rabrador_char1.png', ...]
+             }
+             characters_to_load = character_files.get(theme, [])
+
+
+             for char_file in characters_to_load:
+                 char_name = os.path.splitext(char_file)[0] # Get name without extension
+                 image_path = os.path.join(theme_image_dir, char_file)
+                 if os.path.exists(image_path):
+                     try:
+                         pixmap = QPixmap(image_path)
+                         if not pixmap.isNull():
+                              self._character_pixmaps[char_name] = pixmap
+                              print(f"  - 加载 {char_file} 成功 ({char_name})")
+                         else:
+                              print(f"  - 加载 {char_file} 失败 (文件可能损坏)")
+                     except Exception as e:
+                         print(f"  - 加载 {char_file} 时发生错误: {e}")
+                 else:
+                     print(f"  - 角色图片文件未找到: {image_path}")
+        else:
+            print(f"警告: 未找到主题 '{theme}' 的图片目录: {theme_image_dir}")
+            self.character_image_label.clear()
+
+
     def update_phrase_display(self):
+        # ... (保持不变)
         phrases = self.current_song_data.get('phrases', [])
         if not self.current_song_data or self.current_phrase_index >= len(phrases):
             self.lyrics_label.setText("歌曲结束或无歌词")
@@ -216,14 +307,16 @@ class LearningWidget(QWidget):
             self._set_control_buttons_enabled(False)
             self.next_button.setEnabled(False)
             self.record_button.setEnabled(False)
-            self.feedback_area.setText("歌曲已结束！你真棒！")
+            self.feedback_text_label.setText("歌曲已结束！你真棒！")
+            self.character_image_label.clear()
             return
 
         phrase_data = phrases[self.current_phrase_index]
         self.lyrics_label.setText(phrase_data.get('text', '...'))
         self.lyrics_label.setStyleSheet(self._default_lyrics_style)
 
-        self.feedback_area.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(phrases)}\n请听一听 或 我来唱")
+        self.feedback_text_label.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(phrases)}\n请听一听 或 我来唱")
+        self.character_image_label.clear()
 
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
@@ -232,7 +325,12 @@ class LearningWidget(QWidget):
 
         self.next_button.setEnabled(True)
 
-    # --- 播放相关方法 --- (保持与 Step 6 相同，positionChanged 用于停止和高亮)
+    def update_star_display(self):
+        """更新星星数量的显示"""
+        self.star_label.setText(f"⭐ {self.total_stars}")
+
+
+    # --- 播放相关方法 --- (保持不变)
 
     def play_current_phrase(self):
         if self.is_recording:
@@ -265,20 +363,25 @@ class LearningWidget(QWidget):
             self.record_button.setEnabled(False)
             self.back_button.setEnabled(False)
 
-            # Playback starts, highlight lyrics
             self.lyrics_label.setStyleSheet(self._highlight_lyrics_style)
+
+            self.feedback_text_label.setText("正在播放...")
+            self.character_image_label.clear()
 
 
     def goto_next_phrase(self):
+        # ... (保持不变)
         if self.is_recording:
              self.toggle_recording()
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
              self.media_player.stop()
 
-        # Stop playback/recording, unhighlight lyrics
         self.lyrics_label.setStyleSheet(self._default_lyrics_style)
         self.current_phrase_start_time_ms = -1
         self.current_phrase_end_time_ms = -1
+        self.feedback_text_label.setText("...")
+        self.character_image_label.clear()
+
 
         phrases = self.current_song_data.get('phrases', [])
         if self.current_song_data and self.current_phrase_index < len(phrases) - 1:
@@ -299,9 +402,9 @@ class LearningWidget(QWidget):
             self.next_button.setEnabled(False)
             self.record_button.setEnabled(False)
             self.back_button.setEnabled(True)
-            # TODO: Trigger song completion logic
 
-    # --- 录音相关方法 --- (保持与 Step 5 修复版 v3/v4 相同)
+
+    # --- 录音相关方法 --- (保持不变)
 
     def toggle_recording(self):
         if self.input_device_index is None or self.audio is None:
@@ -320,8 +423,9 @@ class LearningWidget(QWidget):
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.media_player.stop()
 
-        # Recording starts, unhighlight lyrics
         self.lyrics_label.setStyleSheet(self._default_lyrics_style)
+        self.feedback_text_label.setText("正在录音...")
+        self.character_image_label.clear()
 
 
         self.frames = []
@@ -335,7 +439,6 @@ class LearningWidget(QWidget):
 
             self.is_recording = True
             self.record_button.setText("停止录音 (Stop)")
-            # Use hardcoded red style for recording button for clarity
             self.record_button.setStyleSheet("""
                 QPushButton {
                     font-size: 16px;
@@ -357,7 +460,6 @@ class LearningWidget(QWidget):
             self.record_button.setEnabled(True)
             self.back_button.setEnabled(False)
 
-            self.feedback_area.setText("正在录音...")
             self._record_start_time = None
 
             self._record_timer.start(int(CHUNK / RATE * 1000))
@@ -366,14 +468,15 @@ class LearningWidget(QWidget):
         except Exception as e:
             self.is_recording = False
             self.record_button.setText("我来唱 (Record)")
-            self.record_button.setStyleSheet(self.button_style) # Use instance attribute
+            self.record_button.setStyleSheet(self.button_style)
             self._set_control_buttons_enabled(True)
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
                  self.record_button.setEnabled(False)
             self.back_button.setEnabled(True)
-            self.feedback_area.setText("录音失败，请检查麦克风设置。")
+            self.feedback_text_label.setText("录音失败，请检查麦克风设置。")
+            self.character_image_label.clear()
             print(f"录音启动失败: {e}")
             QMessageBox.critical(self, "录音失败", f"无法启动录音设备：{e}\n请检查麦克风连接和权限设置。")
             if self.stream:
@@ -382,7 +485,7 @@ class LearningWidget(QWidget):
                 self.stream = None
 
     def stop_recording(self):
-        """停止录制音频"""
+        # ... (保持不变，已调用 analyze_and_provide_feedback)
         if not self.is_recording:
             return
 
@@ -394,7 +497,7 @@ class LearningWidget(QWidget):
 
         self.is_recording = False
         self.record_button.setText("我来唱 (Record)")
-        self.record_button.setStyleSheet(self.button_style) # Use instance attribute
+        self.record_button.setStyleSheet(self.button_style)
 
         self._set_control_buttons_enabled(True)
         if self.input_device_index is not None and self.audio is not None:
@@ -402,12 +505,13 @@ class LearningWidget(QWidget):
         self.back_button.setEnabled(True)
 
         print(f"停止录音。共录制 {len(self.frames)} 块音频数据。")
-        self.feedback_area.setText("录音完成！正在分析...") # Update text for analysis
+        self.feedback_text_label.setText("录音完成！正在分析...")
+        self.character_image_label.clear()
 
-        # **新增：录音停止后，进行音频分析和反馈**
         self.analyze_and_provide_feedback(self.frames)
 
     def _read_audio_stream(self):
+        # ... (保持不变)
         if not self.is_recording or self.stream is None:
             return
 
@@ -426,64 +530,67 @@ class LearningWidget(QWidget):
             print(f"读取音频流时发生未知错误: {e}")
             self.stop_recording()
 
+    # --- 音频分析和反馈方法 --- (保持不变)
+
+    def analyze_and_provide_feedback(self, audio_frames):
+        """分析录制的音频帧并提供反馈 (结合角色图片)"""
+        if not audio_frames:
+            self.feedback_text_label.setText("没有录到声音，再试一次？")
+            self.character_image_label.clear()
+            print("没有录到音频数据，跳过分析。")
+            return
+
+        try:
+            audio_data_bytes = b''.join(audio_frames)
+            audio_data_np = np.frombuffer(audio_data_bytes, dtype=np.int16)
+
+            rms_energy = 0
+            if audio_data_np.size > 0:
+                rms_energy = np.sqrt(np.mean(np.square(audio_data_np)))
+
+            print(f"录音音频 RMS 能量: {rms_energy}")
+
+            feedback_message = "分析完成。"
+            selected_character_name = None
+
+            # Feedback thresholds (adjust as needed)
+            if rms_energy < 100: # Quiet
+                feedback_message = "声音有点小哦，要不要再大声一点试试呀？"
+                selected_character_name = 'chase'
+            elif rms_energy < 1000: # Medium
+                 feedback_message = "你唱歌啦！声音再洪亮一点会更好听哦！"
+                 selected_character_name = 'chase'
+            elif rms_energy < 8000: # Loud
+                 feedback_message = "你的声音很好听！唱得很棒！"
+                 selected_character_name = 'skye'
+            else: # Very Loud / Energetic
+                 feedback_message = "哇！你的声音真洪亮！太有活力了！像Marshall一样棒！"
+                 selected_character_name = 'marshall'
+
+            if selected_character_name and selected_character_name in self._character_pixmaps:
+                 self.character_image_label.setPixmap(self._character_pixmaps[selected_character_name].scaled(self.character_image_label.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                 self.character_image_label.clear()
+
+
+            self.feedback_text_label.setText(feedback_message)
+
+
+        except Exception as e:
+            print(f"音频分析失败: {e}")
+            self.feedback_text_label.setText("分析声音时遇到问题...")
+            self.character_image_label.clear()
+
+
     def _set_control_buttons_enabled(self, enabled):
         self.listen_button.setEnabled(enabled)
         self.next_button.setEnabled(enabled)
 
 
-    # --- 新增音频分析和反馈方法 ---
-
-    def analyze_and_provide_feedback(self, audio_frames):
-        """分析录制的音频帧并提供反馈"""
-        if not audio_frames:
-            self.feedback_area.setText("没有录到声音，再试一次？")
-            print("没有录到音频数据，跳过分析。")
-            return
-
-        # 将音频数据帧转换为 NumPy 数组
-        # audio_frames 是一个 bytes 对象的列表，需要拼接并转换为数值数组
-        try:
-            # Concatenate all bytes objects
-            audio_data_bytes = b''.join(audio_frames)
-            # Convert bytes to numpy array of int16
-            # Adjust dtype based on FORMAT (pyaudio.paInt16 corresponds to np.int16)
-            audio_data_np = np.frombuffer(audio_data_bytes, dtype=np.int16)
-
-            # 计算声音能量 (RMS - Root Mean Square)
-            # RMS = sqrt(mean(square(samples)))
-            # Avoid division by zero if audio_data_np is empty (shouldn't happen if audio_frames is not empty, but safety check)
-            if audio_data_np.size > 0:
-                rms_energy = np.sqrt(np.mean(np.square(audio_data_np)))
-            else:
-                rms_energy = 0
-            # For int16 data, max value is 32767. Normalize for easier thresholding if needed.
-            # rms_energy_normalized = rms_energy / 32767.0
-
-            print(f"录音音频 RMS 能量: {rms_energy}")
-
-            # 根据能量值提供简单反馈 (这些阈值可能需要根据实际麦克风输入调整)
-            feedback_message = "分析完成。"
-            if rms_energy < 50: # 阈值1：非常安静
-                feedback_message = "声音有点小哦，要不要再大声一点试试呀？"
-            elif rms_energy < 500: # 阈值2：声音偏小
-                 feedback_message = "你唱歌啦！声音再洪亮一点会更好听哦！"
-            elif rms_energy < 5000: # 阈值3：正常音量
-                 feedback_message = "你的声音很好听！唱得很棒！"
-            else: # 阈值4：声音响亮
-                 feedback_message = "哇！你的声音真洪亮！太有活力了！"
-
-            # TODO: 可以在这里添加更复杂的分析，比如音高、节奏初步判断，以及结合角色的反馈
-
-            self.feedback_area.setText(feedback_message) # 显示反馈信息
-
-        except Exception as e:
-            print(f"音频分析失败: {e}")
-            self.feedback_area.setText("分析声音时遇到问题...")
-
-
-    # --- 播放相关槽函数 --- (保持与 Step 6 相同，positionChanged 用于停止和高亮)
+    # --- 播放相关槽函数 --- (保持不变)
 
     def _on_playback_state_changed(self, state):
+        # ... (保持不变)
         print(f"播放状态变化: {state}")
         if state == QMediaPlayer.PlaybackState.StoppedState:
              print("播放已停止")
@@ -501,6 +608,7 @@ class LearningWidget(QWidget):
 
 
     def _on_position_changed(self, position):
+        # ... (保持不变)
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState and self.current_phrase_end_time_ms != -1:
              if position >= self.current_phrase_end_time_ms:
                  self.media_player.stop()
@@ -508,15 +616,17 @@ class LearningWidget(QWidget):
 
 
     def _on_media_error(self, error, error_string):
+         # ... (保持不变)
          print(f"媒体播放错误: {error} - {error_string}")
-         self.feedback_area.setText(f"音频播放错误: {error_string}")
+         self.feedback_text_label.setText(f"音频播放错误: {error_string}")
+         self.character_image_label.clear()
          QMessageBox.critical(self, "音频错误", f"播放音频时发生错误：{error_string}")
          self._set_control_buttons_enabled(False)
          self.record_button.setEnabled(False)
 
 
     def closeEvent(self, event):
-        """窗口关闭时停止音频播放和录音，并释放 PyAudio 资源"""
+        # ... (保持不变)
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.media_player.stop()
         if self.is_recording:
@@ -541,16 +651,18 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
 
-    # Simulate song data (ensure the audio file exists and times match)
+    # Simulate song data (ensure the audio file and images exist)
     test_audio_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio', 'pawpatrol_full.wav')
+    # Ensure assets/images/pawpatrol/ exists and contains chase.png, marshall.png, skye.png
     test_song_data = {
-        "id": "test_song_analyze",
-        "title": "测试音频分析歌曲",
+        "id": "test_song_feedback",
+        "title": "测试反馈歌曲",
+        "theme": "pawpatrol", # Specify theme
         "audio_full": test_audio_path,
         "audio_karaoke": None,
-        "lyrics": "测试分析功能",
+        "lyrics": "测试反馈功能",
         "phrases": [
-          {"text": "测试分析功能", "start_time": 0.0, "end_time": 3.0}
+          {"text": "测试反馈功能", "start_time": 0.0, "end_time": 3.0} # Adjust time to match your test audio
         ],
         "unlocked": True
     }
