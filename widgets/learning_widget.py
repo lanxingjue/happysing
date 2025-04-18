@@ -11,9 +11,7 @@ import pyaudio
 import numpy as np
 import librosa
 import scipy.signal
-# **新增导入：导入 librosa.onset 模块**
-from librosa import onset # Or import librosa.onset
-
+from librosa import onset
 
 # Define audio parameters (保持不变)
 FORMAT = pyaudio.paInt16
@@ -22,15 +20,29 @@ RATE = 16000
 CHUNK = 1024
 RECORD_SECONDS_MAX = 15
 
-# Define parameters for librosa analysis (保持不变，这些也用于 Onset 检测)
+# Define parameters for librosa analysis (保持不变)
 LIBROSA_FRAME_LENGTH = 2048
 LIBROSA_HOP_LENGTH = 512
 
 # Define base path for assets (保持不变)
 ASSETS_BASE_PATH = os.path.join(os.path.dirname(__file__), '..', 'assets')
 
+# Define Star Rewards (新增：根据表现获得的星星数量)
+# These thresholds and star counts need tuning based on testing
+STAR_REWARDS = {
+    "excellent": 3, # Full marks: Loud, Pitched, Rhythmic
+    "good": 2,      # Good attempt: Loud + Pitched, or Loud + Rhythmic, or Pitched + Rhythmic (maybe)
+    "ok": 1,        # Basic attempt: Loud only, or Pitched only, or Rhythmic only
+    "poor": 0       # Very quiet or no clear characteristics
+}
+
 class LearningWidget(QWidget):
     back_to_select = pyqtSignal()
+    # **新增信号：当用户获得星星时发出，通知主窗口更新总星星数和保存进度**
+    stars_earned = pyqtSignal(int)
+    # **新增信号：当一首歌曲闯关成功时发出，通知主窗口更新进度和解锁歌曲**
+    song_completed = pyqtSignal(str)
+
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -70,7 +82,6 @@ class LearningWidget(QWidget):
         self._record_start_time = None
 
         # --- 音频分析器 --- (保持不变)
-        # No specific initialization needed for librosa pitch/onset detection here
 
 
         # --- 歌曲数据和进度 --- (保持不变)
@@ -78,9 +89,12 @@ class LearningWidget(QWidget):
         self.current_phrase_index = 0
         self.current_phrase_start_time_ms = -1
         self.current_phrase_end_time_ms = -1
+        # **新增：跟踪每个乐句获得的星星**
+        self._phrase_stars = [] # List to store stars earned for each phrase
 
-        # --- 游戏化元素 --- (保持不变)
-        self.total_stars = 0
+
+        # --- 游戏化元素 --- (总星星数将由主窗口管理，这里只显示)
+        self.total_stars = 0 # This will be updated from MainWindow
         self.star_label = QLabel("⭐ 0")
         self.star_label.setStyleSheet("font-size: 20px; font-weight: bold; color: #FFD700;")
 
@@ -209,16 +223,15 @@ class LearningWidget(QWidget):
         self.record_button.clicked.connect(self.toggle_recording)
         self.next_button.clicked.connect(self.goto_next_phrase)
 
-        # 初始禁用控制按钮，直到歌曲加载完成，并且麦克风可用
+        # Initial state
         self._set_control_buttons_enabled(False)
-        # Check PyAudio initialization for enabling record button
         if self.input_device_index is None or self.audio is None:
              self.record_button.setEnabled(False)
 
         self.update_star_display()
 
 
-    # --- 歌曲数据与UI更新 --- (保持不变)
+    # --- 歌曲数据与UI更新 --- (重置 _phrase_stars 在 set_song_data)
 
     def set_song_data(self, song_data):
         """设置当前学习歌曲的完整数据"""
@@ -237,6 +250,9 @@ class LearningWidget(QWidget):
         self.current_phrase_index = 0
         self.current_phrase_start_time_ms = -1
         self.current_phrase_end_time_ms = -1
+        # **新增：重置乐句星星列表**
+        self._phrase_stars = [0] * len(song_data.get('phrases', [])) # Initialize with 0 stars for each phrase
+
 
         theme = song_data.get('theme')
         if theme and theme != self._current_theme:
@@ -254,12 +270,10 @@ class LearningWidget(QWidget):
             media_content = QUrl.fromLocalFile(os.path.abspath(audio_path))
             self.media_player.setSource(media_content)
             print(f"尝试加载音频: {os.path.abspath(audio_path)}")
-            # Check PyAudio initialization for enabling record button
             if self.input_device_index is not None and self.audio is not None:
                 self._set_control_buttons_enabled(True)
                 self.record_button.setEnabled(True)
             else:
-                 # Can't record but can listen
                  self._set_control_buttons_enabled(True)
                  self.record_button.setEnabled(False)
                  if self.input_device_index is None:
@@ -309,7 +323,6 @@ class LearningWidget(QWidget):
 
 
     def update_phrase_display(self):
-        # ... (修改录音按钮启用逻辑)
         phrases = self.current_song_data.get('phrases', [])
         if not self.current_song_data or self.current_phrase_index >= len(phrases):
             self.lyrics_label.setText("歌曲结束或无歌词")
@@ -317,8 +330,13 @@ class LearningWidget(QWidget):
             self._set_control_buttons_enabled(False)
             self.next_button.setEnabled(False)
             self.record_button.setEnabled(False)
-            self.feedback_text_label.setText("歌曲已结束！你真棒！")
+            # **修改此处：歌曲结束时，检查是否完成闯关条件**
+            self.feedback_text_label.setText("歌曲已结束！你真棒！") # Default end message
             self.character_image_label.clear()
+
+            # Check if the song is completed and emit signal
+            self._check_song_completion()
+
             return
 
         phrase_data = phrases[self.current_phrase_index]
@@ -328,13 +346,45 @@ class LearningWidget(QWidget):
         self.feedback_text_label.setText(f"当前乐句 {self.current_phrase_index + 1} / {len(phrases)}\n请听一听 或 我来唱")
         self.character_image_label.clear()
 
-        # Check PyAudio initialization for enabling record button
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         else:
              self.record_button.setEnabled(False)
 
         self.next_button.setEnabled(True)
+
+    # **新增方法：检查歌曲是否完成并触发信号**
+    def _check_song_completion(self):
+        """Checks if all phrases are completed and triggers song completion logic."""
+        phrases = self.current_song_data.get('phrases', [])
+        if self.current_phrase_index >= len(phrases) and self.current_song_data:
+             print(f"歌曲 '{self.current_song_data.get('title', '未知歌曲')}' 完成！")
+             # TODO: Implement song completion logic - e.g., sum stars, check for unlock
+
+             # Example: Sum stars earned for each phrase in this attempt
+             stars_earned_in_song = sum(self._phrase_stars)
+             print(f"本轮歌曲共获得星星：{stars_earned_in_song}")
+
+             # Emit signal to notify MainWindow
+             # We might want to emit stars earned per phrase or per song.
+             # Let's emit total stars earned for this song attempt for now.
+             # The MainWindow will handle adding to total and saving.
+             # self.stars_earned.emit(stars_earned_in_song) # Maybe not ideal to emit song total here
+
+             # Emit song completion signal with song ID
+             self.song_completed.emit(self.current_song_data.get('id'))
+
+             # Display a congratulatory message (can be more elaborate later)
+             self.feedback_text_label.setText(f"歌曲'{self.current_song_data.get('title', '未知歌曲')}'完成！\n你真棒，本轮获得 ⭐ {stars_earned_in_song} 颗星星！")
+             # TODO: Add a completion animation/image
+
+
+    # This method is now updated by MainWindow
+    def set_total_stars_display(self, total_stars):
+         """Updates the displayed total stars."""
+         self.total_stars = total_stars
+         self.update_star_display()
+
 
     def update_star_display(self):
         """更新星星数量的显示"""
@@ -381,7 +431,15 @@ class LearningWidget(QWidget):
 
 
     def goto_next_phrase(self):
-        # ... (修改录音按钮启用逻辑)
+        # **修改此处：前进到下一句时，如果当前乐句已获得星星，则不分析，直接前进**
+        # Only analyze if the current phrase hasn't been recorded and scored yet in this attempt
+        if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
+             if self._phrase_stars[self.current_phrase_index] == 0 and not self.is_recording:
+                  # If user skips without recording/analyzing, provide minimum feedback or none
+                  # For now, just proceed without scoring
+                  print(f"Skipping phrase {self.current_phrase_index + 1} without recording.")
+
+
         if self.is_recording:
              self.toggle_recording()
         if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
@@ -395,31 +453,25 @@ class LearningWidget(QWidget):
 
 
         phrases = self.current_song_data.get('phrases', [])
-        if self.current_song_data and self.current_phrase_index < len(phrases) - 1:
-            self.current_phrase_index += 1
-            self.update_phrase_display()
-            self._set_control_buttons_enabled(True)
-            # Check PyAudio initialization for enabling record button
-            if self.input_device_index is not None and self.audio is not None:
-                 self.record_button.setEnabled(True)
-            else:
-                 self.record_button.setEnabled(False)
-            self.back_button.setEnabled(True)
-            print(f"前进到下一句乐句，索引：{self.current_phrase_index}")
-        elif self.current_song_data and self.current_phrase_index == len(phrases) - 1:
-            print("已是最后一句话，歌曲完成！")
-            self.current_phrase_index += 1
-            self.update_phrase_display()
-            self._set_control_buttons_enabled(False)
-            self.next_button.setEnabled(False)
-            self.record_button.setEnabled(False)
-            self.back_button.setEnabled(True)
+        if self.current_song_data and self.current_phrase_index < len(phrases): # Should be < len(phrases) - 1 to go to next
+             self.current_phrase_index += 1
+             self.update_phrase_display()
+             self._set_control_buttons_enabled(True)
+             if self.input_device_index is not None and self.audio is not None:
+                  self.record_button.setEnabled(True)
+             else:
+                  self.record_button.setEnabled(False)
+             self.back_button.setEnabled(True)
+             print(f"前进到下一句乐句，索引：{self.current_phrase_index}")
+        # The check for last phrase completion happens in update_phrase_display now
+        # elif self.current_song_data and self.current_phrase_index == len(phrases) - 1:
+        #    # This case is handled by update_phrase_display when index goes past last phrase
+        #    pass
 
 
-    # --- 录音相关方法 --- (修改 start_recording, stop_recording 中的录音按钮启用逻辑)
+    # --- 录音相关方法 --- (保持不变)
 
     def toggle_recording(self):
-        # Check PyAudio initialization
         if self.input_device_index is None or self.audio is None:
             QMessageBox.warning(self, "录音失败", "未找到可用的麦克风设备或音频系统未初始化。")
             return
@@ -427,6 +479,15 @@ class LearningWidget(QWidget):
         if self.is_recording:
             self.stop_recording()
         else:
+            # **新增：开始录音前检查是否当前乐句已得分，如果已得分则提示**
+            if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
+                 if self._phrase_stars[self.current_phrase_index] > 0:
+                      print(f"当前乐句 {self.current_phrase_index + 1} 已获得星星 ({self._phrase_stars[self.current_phrase_index]})，再次录音将覆盖得分。")
+                      # Optional: Ask user if they want to re-record and lose current stars for this phrase
+                      # reply = QMessageBox.question(self, '重新录音', '这句你已经唱得很棒了！重新录音会覆盖之前的星星哦，确定吗？', QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                      # if reply == QMessageBox.No:
+                      #      return # Don't start recording
+
             self.start_recording()
 
     def start_recording(self):
@@ -482,7 +543,6 @@ class LearningWidget(QWidget):
             self.record_button.setText("我来唱 (Record)")
             self.record_button.setStyleSheet(self.button_style)
             self._set_control_buttons_enabled(True)
-            # Check PyAudio initialization
             if self.input_device_index is not None and self.audio is not None:
                  self.record_button.setEnabled(True)
             else:
@@ -498,6 +558,7 @@ class LearningWidget(QWidget):
                 self.stream = None
 
     def stop_recording(self):
+        # ... (修改：在调用 analyze_and_provide_feedback 之前重置当前乐句的星星)
         if not self.is_recording:
             return
 
@@ -512,7 +573,6 @@ class LearningWidget(QWidget):
         self.record_button.setStyleSheet(self.button_style)
 
         self._set_control_buttons_enabled(True)
-        # Check PyAudio initialization
         if self.input_device_index is not None and self.audio is not None:
              self.record_button.setEnabled(True)
         else:
@@ -522,6 +582,11 @@ class LearningWidget(QWidget):
         print(f"停止录音。共录制 {len(self.frames)} 块音频数据。")
         self.feedback_text_label.setText("录音完成！正在分析...")
         self.character_image_label.clear()
+
+        # **新增：在分析前重置当前乐句的星星**
+        if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
+             self._phrase_stars[self.current_phrase_index] = 0 # Reset stars for this phrase
+
 
         self.analyze_and_provide_feedback(self.frames)
 
@@ -549,7 +614,7 @@ class LearningWidget(QWidget):
         self.next_button.setEnabled(enabled)
 
 
-    # --- 修改音频分析和反馈方法 --- (新增节奏分析并更新反馈逻辑)
+    # --- 音频分析和反馈方法 --- (新增计算星星并触发信号)
 
     def analyze_and_provide_feedback(self, audio_frames):
         """分析录制的音频帧 (能量, 音高, 节奏) 并提供反馈 (结合角色图片)"""
@@ -565,14 +630,15 @@ class LearningWidget(QWidget):
             audio_data_np_float32 = audio_data_np_int16.astype(np.float32) / 32768.0
 
 
-            # --- 音量分析 (RMS) --- (保持不变)
+            # --- 音量分析 (RMS) ---
             rms_energy = 0
             if audio_data_np_float32.size > 0:
                 rms_energy = np.sqrt(np.mean(np.square(audio_data_np_float32)))
             print(f"录音音频 RMS 能量 (float32): {rms_energy}")
 
 
-            # --- 音高分析 (使用 librosa) --- (保持不变)
+            # --- 音高分析 (使用 librosa) ---
+            has_discernible_pitch = False # Default if pitch analysis fails
             try:
                  f0, voiced_flag, voiced_probabilities = librosa.pyin(
                      y=audio_data_np_float32,
@@ -591,82 +657,83 @@ class LearningWidget(QWidget):
 
             except Exception as e:
                 print(f"Librosa pitch analysis failed: {e}")
-                has_discernible_pitch = False # Assume no pitch detected on failure
+                has_discernible_pitch = False
 
 
-            # --- 节奏分析 (使用 librosa.onset) --- (新增)
+            # --- 节奏分析 (使用 librosa.onset) ---
+            has_discernible_rhythm = False # Default if onset analysis fails
             try:
-                 # Detect onsets. The onset envelope is first computed, then peak picking.
-                 # hop_length should be smaller than frame_length for onset detection.
-                 # We can use a standard onset detection method like 'hfc' (High Frequency Content).
-                 # The result `onsets` is an array of frame indices where onsets were detected.
                  onset_frames = onset.onset_detect(y=audio_data_np_float32, sr=RATE,
-                                                   hop_length=LIBROSA_HOP_LENGTH,
-                                                   # Optional: increase peak_perc to detect stronger onsets
-                                                   # peak_perc=50,
-                                                   # Optional: adjust pre_avg/post_avg for smoothing onset strength curve
-                                                   # pre_avg=3, post_avg=3
-                                                   )
+                                                   hop_length=LIBROSA_HOP_LENGTH)
 
                  num_onsets = len(onset_frames)
                  print(f"检测到 {num_onsets} 个声音起始点 (Onsets)")
 
                  # Simple check: is a reasonable number of onsets detected for the phrase duration?
-                 # The expected number of onsets depends on the song's rhythm and child's singing speed.
-                 # For a rough check, let's say more than N onsets indicates some attempt at rhythm.
-                 # N could be 2 or 3 for a short phrase.
-                 rhythm_onset_threshold = 2 # Example threshold: need at least 2 onsets
-                 has_discernible_rhythm = num_onsets >= rhythm_onset_threshold
+                 # Estimate expected onsets based on phrase duration and a typical rhythm rate (e.g., 1 onset per 0.5 seconds)
+                 phrase_duration_sec = (self.current_phrase_end_time_ms - self.current_phrase_start_time_ms) / 1000.0 if self.current_phrase_end_time_ms != -1 else RECORD_SECONDS_MAX # Use recorded duration if phrase time missing
+                 # Let's set a minimum required onsets per second, e.g., 0.5 onsets/sec
+                 min_onsets_required = max(1, int(phrase_duration_sec * 0.5)) # Need at least 1 onset, or 0.5 per second duration
+
+                 has_discernible_rhythm = num_onsets >= min_onsets_required
+                 print(f"Phrase duration: {phrase_duration_sec:.2f}s, Min onsets required: {min_onsets_required}, Detected onsets: {num_onsets}, Has rhythm: {has_discernible_rhythm}")
 
 
             except Exception as e:
                 print(f"Librosa onset analysis failed: {e}")
-                has_discernible_rhythm = False # Assume no rhythm detected on failure
+                has_discernible_rhythm = False
 
 
-            # --- 综合反馈逻辑 --- (结合能量, 音高, 和节奏)
+            # --- 综合反馈逻辑和星星奖励 --- (修改反馈逻辑，新增星星计算)
             feedback_message = "分析完成。"
             selected_character_name = None
+            stars_earned_for_phrase = 0 # Stars earned for this phrase attempt
 
             # RMS thresholds for float32 data (adjust based on testing)
             rms_quiet_threshold = 0.001
             rms_medium_threshold = 0.01
             rms_loud_threshold = 0.1
 
-            # Determine overall performance category
             is_loud_enough = rms_energy > rms_medium_threshold
             is_pitched = has_discernible_pitch
-            is_rhythmic = has_discernible_rhythm # Based on simple onset count
+            is_rhythmic = has_discernible_rhythm
 
-            if rms_energy < rms_quiet_threshold * 0.5: # Very quiet, likely no sound
+            # Determine performance category and stars earned
+            if rms_energy < rms_quiet_threshold * 0.5: # Very quiet
                  feedback_message = "没有听到你的声音哦，再靠近麦克风一点试试？"
-                 selected_character_name = 'chase' # Needs encouragement
-            elif not is_loud_enough: # Some sound, but quiet
-                if is_pitched and is_rhythmic:
-                     feedback_message = "你唱得很棒！声音小小的也很动听呢！"
-                     selected_character_name = 'skye' # Gentle singer
-                elif is_pitched:
-                     feedback_message = "声音小小的，但是有音调哦！再大声一点试试看？"
-                     selected_character_name = 'chase' # Encourage volume
-                elif is_rhythmic:
-                     feedback_message = "声音小小的，但跟着节奏点发声啦！很棒！"
-                     selected_character_name = 'marshall' # Acknowledge rhythm attempt
-                else: # Quiet, no clear pitch or rhythm
-                     feedback_message = "你发声啦！很棒的尝试！声音再大一点就更清楚了！"
-                     selected_character_name = 'chase' # General encouragement
-            elif is_loud_enough: # Good volume
-                 if is_pitched and is_rhythmic:
-                      feedback_message = "太棒了！你唱得又响亮、又有音调、还有节奏感！真是一位小歌星！"
-                      selected_character_name = 'marshall' # Full marks!
+                 selected_character_name = 'chase'
+                 stars_earned_for_phrase = STAR_REWARDS["poor"] # 0 stars
+            elif is_loud_enough and is_pitched and is_rhythmic: # Excellent
+                 feedback_message = "太棒了！你唱得又响亮、又有音调、还有节奏感！真是一位小歌星！"
+                 selected_character_name = 'marshall'
+                 stars_earned_for_phrase = STAR_REWARDS["excellent"] # 3 stars
+            elif (is_loud_enough and is_pitched) or (is_loud_enough and is_rhythmic) or (is_pitched and is_rhythmic): # Good (at least two criteria met)
+                 if is_loud_enough and is_pitched:
+                      feedback_message = "声音响亮，旋律也很棒！"
+                      selected_character_name = 'skye'
+                 elif is_loud_enough and is_rhythmic:
+                      feedback_message = "声音响亮，而且发声很有节奏感！"
+                      selected_character_name = 'marshall'
+                 elif is_pitched and is_rhythmic: # Quiet but pitched and rhythmic
+                      feedback_message = "声音小小的，但唱得很有音调和节奏呢！轻轻地唱也很棒！"
+                      selected_character_name = 'skye' # Maybe Skye for musicality
+                 stars_earned_for_phrase = STAR_REWARDS["good"] # 2 stars
+            elif is_loud_enough or is_pitched or is_rhythmic: # OK (at least one criterion met)
+                 if is_loud_enough:
+                      feedback_message = "你发出声音啦！很棒！声音很响亮！"
+                      selected_character_name = 'marshall'
                  elif is_pitched:
-                      feedback_message = "声音响亮，旋律也很棒！再试试跟着歌曲的节奏一起唱？"
-                      selected_character_name = 'skye' # Good pitch/volume, encourage rhythm
+                      feedback_message = "你发出声音啦！很棒！声音很有音调呢！"
+                      selected_character_name = 'skye'
                  elif is_rhythmic:
-                      feedback_message = "声音响亮，而且发声很有节奏感！再试试唱出歌曲的旋律？"
-                      selected_character_name = 'marshall' # Good rhythm/volume, encourage pitch
-                 else: # Loud, but no clear pitch or rhythm (maybe shouting, talking, sustained note without pitch detection)
-                      feedback_message = "声音好洪亮！很棒的尝试！唱歌的时候，试着发出有长短、有高低的声音哦！"
-                      selected_character_name = 'marshall' # Acknowledge volume, guide towards singing
+                      feedback_message = "你发出声音啦！很棒！发声很有节奏感！"
+                      selected_character_name = 'marshall'
+                 stars_earned_for_phrase = STAR_REWARDS["ok"] # 1 star
+            else: # minimal sound, no clear pitch or rhythm
+                 feedback_message = "你尝试啦，很棒！如果想唱歌，要发出声音哦，再试试看？"
+                 selected_character_name = 'chase' # General encouragement for trying
+                 stars_earned_for_phrase = STAR_REWARDS["poor"] # 0 stars
+
 
             # Display character image
             if selected_character_name and selected_character_name in self._character_pixmaps:
@@ -675,13 +742,22 @@ class LearningWidget(QWidget):
                  self.character_image_label.clear()
 
             # Display feedback message
-            self.feedback_text_label.setText(feedback_message)
+            self.feedback_text_label.setText(f"{feedback_message}\n获得星星：⭐ {stars_earned_for_phrase}") # Add stars info to feedback
+
+
+            # **新增：更新当前乐句获得的星星，并触发信号**
+            if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
+                 self._phrase_stars[self.current_phrase_index] = stars_earned_for_phrase
+                 print(f"乐句 {self.current_phrase_index + 1} 获得星星：{stars_earned_for_phrase}")
+                 # Emit signal to notify MainWindow to add stars and save
+                 self.stars_earned.emit(stars_earned_for_phrase)
+
 
         except Exception as e:
             print(f"音频分析失败: {e}")
             self.feedback_text_label.setText("分析声音时遇到问题...")
             self.character_image_label.clear()
-            # Fallback to just volume analysis if anything goes wrong in the main analysis block
+            # Fallback to volume analysis if main analysis fails
             self._analyze_volume_only_feedback(audio_frames)
 
 
@@ -704,7 +780,10 @@ class LearningWidget(QWidget):
 
             print(f"录音音频 RMS 能量 (int16, fallback): {rms_energy}")
 
-            # Original volume feedback thresholds from Step 7 (adjust as needed)
+            feedback_message = "分析完成 (仅音量)。"
+            selected_character_name = None
+            stars_earned_for_phrase = 0 # Fallback gives 0 stars
+
             if rms_energy < 50:
                 feedback_message = "声音有点小哦，要不要再大声一点试试呀？"
                 selected_character_name = 'chase'
@@ -723,7 +802,15 @@ class LearningWidget(QWidget):
             else:
                  self.character_image_label.clear()
 
-            self.feedback_text_label.setText(feedback_message)
+            self.feedback_text_label.setText(f"{feedback_message}\n获得星星：⭐ {stars_earned_for_phrase}") # Add stars info to feedback
+
+            # **新增：更新当前乐句获得的星星 (fallback)，并触发信号**
+            if self.current_song_data and self.current_phrase_index < len(self.current_song_data.get('phrases', [])):
+                 self._phrase_stars[self.current_phrase_index] = stars_earned_for_phrase # Will be 0
+                 print(f"乐句 {self.current_phrase_index + 1} (fallback) 获得星星：{stars_earned_for_phrase}")
+                 # Emit signal even for 0 stars, so MainWindow can save progress
+                 self.stars_earned.emit(stars_earned_for_phrase)
+
 
         except Exception as e:
             print(f"fallback volume analysis failed: {e}")
@@ -796,14 +883,15 @@ if __name__ == '__main__':
     # Simulate song data (ensure the audio file and images exist)
     test_audio_path = os.path.join(os.path.dirname(__file__), '..', 'assets', 'audio', 'pawpatrol_full.wav')
     test_song_data = {
-        "id": "test_song_rhythm",
-        "title": "测试节奏分析歌曲",
+        "id": "test_song_score",
+        "title": "测试得分歌曲",
         "theme": "pawpatrol", # Specify theme
         "audio_full": test_audio_path,
         "audio_karaoke": None,
-        "lyrics": "测试节奏分析功能",
+        "lyrics": "第一句\n第二句",
         "phrases": [
-          {"text": "测试节奏分析功能", "start_time": 0.0, "end_time": 5.0} # Use a longer time for testing
+          {"text": "第一句", "start_time": 0.0, "end_time": 2.0},
+          {"text": "第二句", "start_time": 2.5, "end_time": 4.5}
         ],
         "unlocked": True
     }
@@ -812,21 +900,19 @@ if __name__ == '__main__':
          print(f"Test audio {test_song_data['audio_full']} not found. Playback will not work.")
          test_song_data["audio_full"] = None
 
-    # Ensure test character images exist for the theme
     test_theme_image_dir = os.path.join(ASSETS_BASE_PATH, 'images', test_song_data['theme'])
     required_images = ['chase.png', 'marshall.png', 'skye.png']
     images_found = all(os.path.isfile(os.path.join(test_theme_image_dir, f)) for f in required_images)
 
     if not os.path.isdir(test_theme_image_dir) or not images_found:
          print(f"Warning: Required test character images for theme '{test_song_data['theme']}' not found in {test_theme_image_dir}. Character images won't display correctly.")
-         # Create dummy files if missing to avoid QPixmap errors
          if not os.path.isdir(test_theme_image_dir):
              os.makedirs(test_theme_image_dir, exist_ok=True)
          for img_name in required_images:
              dummy_path = os.path.join(test_theme_image_dir, img_name)
              if not os.path.exists(dummy_path):
                  try:
-                    dummy_img = Image.new('RGB', (100, 100), color = 'red') # Create slightly larger dummy
+                    dummy_img = Image.new('RGB', (100, 100), color = 'red')
                     dummy_img.save(dummy_path)
                     print(f"Created dummy image: {dummy_path}")
                  except ImportError:
