@@ -1,0 +1,180 @@
+/* style.qss */
+
+/* General Styles for LearningWidget */
+#LearningWidget {
+    /* Background image will be set dynamically in code, but fallback color can be here */
+    background-color: #f0f0f0; /* Light gray fallback */
+    /* background-image and background-size will be set per-song in code */
+}
+
+/* Song Title Label */
+QLabel#songTitleLabel { /* Assign objectName in code */
+    color: #fff; /* White text */
+    font-size: 28px;
+    font-weight: bold;
+    /* text-shadow: 2px 2px 4px #000; /* Try if supported */
+}
+
+/* Total Stars Label */
+QLabel#starLabel { /* Assign objectName in code */
+    color: #FFD700; /* Gold */
+    font-size: 20px;
+    font-weight: bold;
+}
+
+/* Lyrics Label */
+QLabel#lyricsLabel { /* Assign objectName in code */
+    font-size: 22px;
+    color: #fff; /* White text */
+    min-height: 80px;
+    padding: 10px;
+    background-color: rgba(0, 0, 0, 0.4); /* Semi-transparent dark background */
+    border: 2px solid rgba(255, 255, 255, 0.5); /* Semi-transparent white border */
+    border-radius: 15px; /* Rounded corners */
+}
+
+/* Highlighted Lyrics Label */
+QLabel#lyricsLabel[highlight="true"] { /* Use dynamic property in code */
+    color: #FFFF00; /* Yellow highlight */
+    font-weight: bold;
+    border-color: #FFFF00;
+    background-color: rgba(255, 255, 0, 0.4); /* Semi-transparent yellow background */
+}
+
+
+/* Feedback Area Widget (container) */
+QWidget#feedbackWidget { /* Assign objectName in code */
+    /* No background here, layout takes care of it */
+}
+
+/* Character Image Label */
+QLabel#characterImageLabel { /* Assign objectName in code */
+    /* Size is fixed in code */
+}
+
+/* Feedback Text Label */
+QLabel#feedbackTextLabel { /* Assign objectName in code */
+    font-size: 18px;
+    color: #fff; /* White text */
+    /* text-shadow: 1px 1px 2px #000; /* Try if supported */
+    background-color: rgba(0, 0, 0, 0.3); /* Optional: slight background for text */
+    padding: 8px; /* Optional padding */
+    border-radius: 8px; /* Optional rounded corners */
+}
+
+/* Indicator Icons */
+QLabel#volumeIndicator, QLabel#pitchIndicator, QLabel#rhythmIndicator { /* Assign objectName in code */
+    /* Size is fixed in code */
+}
+
+
+/* Control Buttons */
+QPushButton {
+    font-size: 16px;
+    padding: 15px 25px;
+    border-radius: 25px;
+    font-weight: bold;
+    min-width: 120px;
+}
+
+QPushButton#listenButton { /* Assign objectName in code */
+    background-color: #2196F3; /* Blue */
+    color: white;
+    border: 3px solid #1976D2;
+}
+QPushButton#listenButton:hover { background-color: #1976D2; border-color: #1565C0; }
+QPushButton#listenButton:pressed { background-color: #1565C0; border-color: #0D47A1; }
+QPushButton#listenButton:disabled { background-color: #cccccc; border-color: #999999; color: #666666;}
+
+
+QPushButton#recordButton { /* Assign objectName in code */
+    background-color: #F44336; /* Red */
+    color: white;
+    border: 3px solid #D32F2F;
+}
+QPushButton#recordButton:hover { background-color: #D32F2F; border-color: #C62828; }
+QPushButton#recordButton:pressed { background-color: #C62828; border-color: #B71C1C; }
+QPushButton#recordButton:disabled { background-color: #cccccc; border-color: #999999; color: #666666;}
+
+/* Style for Record Button when actively recording */
+QPushButton#recordButton[recording="true"] { /* Use dynamic property in code */
+    background-color: #C62828; /* Darker Red */
+    border-color: #B71C1C;
+}
+
+
+QPushButton#nextButton { /* Assign objectName in code */
+    background-color: #FF9800; /* Orange */
+    color: white;
+    border: 3px solid #f57c00;
+}
+QPushButton#nextButton:hover { background-color: #f57c00; border-color: #e65100; }
+QPushButton#nextButton:pressed { background-color: #e65100; border-color: #bf360c; }
+QPushButton#nextButton:disabled { background-color: #cccccc; border-color: #999999; color: #666666;}
+
+
+/* Back Button */
+QPushButton#backButton { /* Assign objectName in code */
+    font-size: 14px;
+    padding: 8px 15px;
+    border-radius: 15px;
+    background-color: #9E9E9E; /* Gray */
+    color: white;
+    border: 2px solid #757575;
+    margin-top: 20px;
+    min-width: auto; /* Allow smaller width */
+}
+QPushButton#backButton:hover { background-color: #757575; border-color: #616161; }
+QPushButton#backButton:pressed { background-color: #616161; border-color: #424242; }
+
+/* Song Selection Widget Styles (basic) */
+QWidget#SongSelectionWidget { /* Assign objectName in code */
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                                stop:0 #87CEFA, stop:1 #ADD8E6); /* Light blue gradient */
+}
+
+/* Song Selection Title */
+QLabel#selectionTitleLabel { /* Assign objectName in code */
+    font-size: 20px;
+    font-weight: bold;
+    margin-bottom: 20px;
+    color: #333;
+}
+
+/* Song Selection Stars Display */
+QLabel#selectionStarsLabel { /* Assign objectName in code */
+    font-size: 18px;
+    color: #FFD700;
+}
+
+/* Song Selection Buttons */
+QPushButton#songButton { /* Assign objectName in code */
+     font-size: 18px;
+     padding: 10px;
+     border-radius: 8px;
+     border: none;
+     min-width: 200px;
+     font-weight: bold;
+}
+
+QPushButton#songButton[unlocked="true"] { /* Use dynamic property */
+    background-color: #4CAF50; /* Green */
+    color: white;
+}
+QPushButton#songButton[unlocked="true"]:hover { background-color: #45a049; }
+QPushButton#songButton[unlocked="true"]:pressed { background-color: #397d32; }
+
+QPushButton#songButton[unlocked="false"] { /* Locked state */
+     color: #333; /* Dark text */
+}
+
+QPushButton#songButton[unlocked="false"][unlockable="true"] { /* Locked but unlockable */
+    background-color: #FFC107; /* Amber */
+}
+QPushButton#songButton[unlocked="false"][unlockable="true"]:hover { background-color: #FFA000; }
+QPushButton#songButton[unlocked="false"][unlockable="true"]:pressed { background-color: #FF8F00; }
+
+QPushButton#songButton[unlocked="false"][unlockable="false"] { /* Locked and not unlockable */
+    background-color: #9E9E9E; /* Gray */
+    color: #666; /* Gray text */
+}

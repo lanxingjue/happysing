@@ -2,7 +2,7 @@
   {
     "id": "pawpatrol",
     "title": "汪汪队立大功主题曲",
-    "theme": "pawpatrol",
+    "theme": "pawpatrol", 
     "audio_full": "assets/audio/pawpatrol_full.wav",
     "audio_karaoke": null,
     "lyrics": "汪汪队 汪汪队 我们出发\n遇到困难 我们不怕\n勇敢向前冲 排除万难",
@@ -15,13 +15,19 @@
       {"text": "排除万难", "start_time": 10.5, "end_time": 12.5}
     ],
     "unlocked": true,
-    "unlock_stars_required": 0
+    "unlock_stars_required": 0,
+    "background_image": "assets/images/backgrounds/pawpatrol_bg.png", 
+    "character_images": { 
+        "chase": "chase.png", 
+        "marshall": "marshall.png",
+        "skye": "skye.png"
+    }
   },
    {
     "id": "rabrador",
     "title": "拉布拉多警长主题曲",
     "theme": "rabrador",
-    "audio_full": "assets/audio/rabrador_full.wav",
+    "audio_full": null, 
     "audio_karaoke": null,
     "lyrics": "拉布拉多 拉布拉多\n我是城市守护者",
     "phrases": [
@@ -29,6 +35,10 @@
       {"text": "我是城市守护者", "start_time": 3.5, "end_time": 6.0}
     ],
     "unlocked": false,
-    "unlock_stars_required": 20
+    "unlock_stars_required": 20,
+    "background_image": "assets/images/backgrounds/rabrador_bg.png", 
+    "character_images": {
+        "rabrador_main": "rabrador/rabrador_main.gif" 
+    }
   }
 ]

@@ -4,7 +4,7 @@ import os
 import sys # Re-import sys to use sys.maxsize
 
 from PyQt6.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QStackedWidget, QMessageBox
-from PyQt6.QtCore import Qt, QUrl, QStandardPaths, pyqtSignal # Import pyqtSignal
+from PyQt6.QtCore import Qt, QUrl, QStandardPaths # Import pyqtSignal
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaDevices
 
 # From widgets package
@@ -14,9 +14,11 @@ from widgets.learning_widget import LearningWidget
 # Define data file paths
 SONGS_DATA_PATH = os.path.join(os.path.dirname(__file__), 'data', 'songs.json')
 USER_DATA_DIR = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-if USER_DATA_DIR == "":
-    USER_DATA_DIR = os.path.join(os.path.expanduser("~"), ".happysing")
-    print(f"Warning: AppDataLocation not available, falling back to {USER_DATA_DIR}")
+if USER_DATA_DIR == "" or not os.access(os.path.dirname(USER_DATA_DIR) if os.path.dirname(USER_DATA_DIR) else ".", os.W_OK):
+    # Fallback if standard location is not available or not writable
+    USER_DATA_DIR = os.path.join(os.path.expanduser("~"), ".happysing_appdata") # Use a less common name to avoid conflict
+    print(f"Warning: Standard AppDataLocation not available or writable, falling back to {USER_DATA_DIR}")
+
 
 os.makedirs(USER_DATA_DIR, exist_ok=True)
 USER_PROGRESS_PATH = os.path.join(USER_DATA_DIR, 'user_progress.json')
@@ -24,15 +26,15 @@ USER_PROGRESS_PATH = os.path.join(USER_DATA_DIR, 'user_progress.json')
 # Default initial progress if file not found
 DEFAULT_USER_PROGRESS = {
   "total_stars": 0,
-  "unlocked_song_ids": ["pawpatrol"]
+  "unlocked_song_ids": ["pawpatrol"] # Default first unlocked song
 }
 
+# **新增：QSS 文件路径**
+QSS_PATH = os.path.join(os.path.dirname(__file__), 'style.qss')
 
 class MainWindow(QMainWindow):
-    # **新增信号：用于 SongSelectionWidget 通知 MainWindow 尝试解锁歌曲**
-    # This signal is not strictly needed if we directly call a method on parent,
-    # but using signal is a more standard PyQt way for child to talk to parent.
-    try_unlock_song_signal = pyqtSignal(str) # Emits song_id
+    # Signal for SongSelectionWidget to notify MainWindow to attempt unlock
+    # try_unlock_song_signal = pyqtSignal(str) # Emits song_id
 
 
     def __init__(self):
@@ -41,8 +43,14 @@ class MainWindow(QMainWindow):
         # Load data
         self._load_songs_data()
         if not self.all_songs_data:
-             QMessageBox.critical(self, "错误", f"无法加载歌曲数据文件: {SONGS_DATA_PATH}\n请检查文件是否存在且格式正确。")
-             pass
+             # Only show critical error if file exists but is invalid/empty
+             if os.path.exists(SONGS_DATA_PATH):
+                 QMessageBox.critical(self, "错误", f"无法加载歌曲数据文件: {SONGS_DATA_PATH}\n请检查文件是否存在且格式正确。应用程序将退出。")
+                 sys.exit(1)
+             else:
+                 QMessageBox.critical(self, "致命错误", f"歌曲数据文件未找到：\n{SONGS_DATA_PATH}\n应用程序将退出。")
+                 sys.exit(1)
+
 
         self._load_user_progress()
 
@@ -55,30 +63,29 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.stacked_widget)
 
         # --- Create and add widgets ---
+        # --- 创建和添加控件 ---
 
-        # Song selection widget
+        # 歌曲选择控件
+        # **确保这里没有传递 try_unlock_signal 参数**
         self.song_selection_widget = SongSelectionWidget(songs_data=self.all_songs_data, user_progress=self.user_progress)
         self.song_selection_widget.song_selected.connect(self.on_song_selected)
-        # **新增：连接 SongSelectionWidget 的 try_unlock_song_signal**
-        # If using the signal approach in SongSelectionWidget
-        self.try_unlock_song_signal.connect(self.on_try_unlock_song) # Connect signal defined in MainWindow
 
-        # If calling parent method directly in SongSelectionWidget
-        # self.song_selection_widget.set_parent_window(self) # Pass self reference (less preferred)
+        # **确保连接的是 song_selection_widget 实例的 try_unlock_song_signal 信号**
+        self.song_selection_widget.try_unlock_song_signal.connect(self.on_try_unlock_song)
 
+        self.stacked_widget.addWidget(self.song_selection_widget) # 索引 0
 
-        self.stacked_widget.addWidget(self.song_selection_widget) # Index 0
-
-        # Learning widget
+        # 学习控件
         self.learning_widget = LearningWidget()
         self.learning_widget.back_to_select.connect(self.on_back_to_song_select)
         self.learning_widget.stars_earned.connect(self.on_stars_earned)
         self.learning_widget.song_completed.connect(self.on_song_completed)
 
-        self.stacked_widget.addWidget(self.learning_widget) # Index 1
+        self.stacked_widget.addWidget(self.learning_widget) # 索引 1
 
-        # Set initial widget
+        # 设置初始控件
         self.stacked_widget.setCurrentWidget(self.song_selection_widget)
+
 
 
     def _load_songs_data(self):
@@ -89,8 +96,11 @@ class MainWindow(QMainWindow):
                 with open(SONGS_DATA_PATH, 'r', encoding='utf-8') as f:
                     self.all_songs_data = json.load(f)
                 print(f"Successfully loaded {len(self.all_songs_data)} songs data.")
+                # Validate minimum required fields for each song
+                self.all_songs_data = [s for s in self.all_songs_data if s.get("id") and s.get("title") and isinstance(s.get("phrases"), list)]
+                print(f"After validation, {len(self.all_songs_data)} valid songs remain.")
             except Exception as e:
-                print(f"Error loading songs data file: {e}")
+                print(f"Error loading or parsing songs data file: {e}")
                 self.all_songs_data = []
         else:
             print(f"Songs data file not found: {SONGS_DATA_PATH}")
@@ -105,19 +115,41 @@ class MainWindow(QMainWindow):
                     loaded_progress = json.load(f)
                     # Validate and merge loaded data
                     if isinstance(loaded_progress, dict):
+                         # Validate total_stars
                          if "total_stars" in loaded_progress and isinstance(loaded_progress["total_stars"], (int, float)):
-                              self.user_progress["total_stars"] = int(loaded_progress["total_stars"])
+                              self.user_progress["total_stars"] = max(0, int(loaded_progress["total_stars"])) # Ensure non-negative
+
+                         # Validate unlocked_song_ids
                          if "unlocked_song_ids" in loaded_progress and isinstance(loaded_progress["unlocked_song_ids"], list):
-                              # Ensure unlocked_song_ids are valid song IDs from songs data
-                              valid_song_ids = {s.get("id") for s in self.all_songs_data if s.get("id")}
-                              self.user_progress["unlocked_song_ids"] = list(set(loaded_progress["unlocked_song_ids"]) & valid_song_ids) # Only keep valid and unique IDs
+                              # Ensure unlocked_song_ids are valid song IDs from songs data and are unique
+                              valid_song_ids_from_data = {s.get("id") for s in self.all_songs_data if s.get("id")}
+                              # Start with default unlocked IDs and add valid IDs from loaded data
+                              initial_unlocked = set(DEFAULT_USER_PROGRESS["unlocked_song_ids"])
+                              loaded_unlocked = set(loaded_progress["unlocked_song_ids"])
+                              # Only keep IDs that are in the loaded data AND exist in songs.json
+                              self.user_progress["unlocked_song_ids"] = list(initial_unlocked | (loaded_unlocked & valid_song_ids_from_data))
+                              # Ensure the first default song is always unlocked if it exists in data
+                              if "pawpatrol" in valid_song_ids_from_data and "pawpatrol" not in self.user_progress["unlocked_song_ids"]:
+                                   self.user_progress["unlocked_song_ids"].append("pawpatrol")
+
 
                     print(f"Successfully loaded user progress from {USER_PROGRESS_PATH}. Total stars: {self.user_progress.get('total_stars', 0)}")
             except Exception as e:
                 print(f"Error loading user progress file: {e}")
                 print("Using default user progress.")
+                # If load failed, ensure default unlocked song is present if it exists in song data
+                valid_song_ids_from_data = {s.get("id") for s in self.all_songs_data if s.get("id")}
+                if "pawpatrol" in valid_song_ids_from_data and "pawpatrol" not in self.user_progress["unlocked_song_ids"]:
+                      self.user_progress["unlocked_song_ids"].append("pawpatrol")
+
+
         else:
             print(f"User progress file not found: {USER_PROGRESS_PATH}. Using default progress.")
+            # Ensure the first default song is always unlocked if it exists in data
+            valid_song_ids_from_data = {s.get("id") for s in self.all_songs_data if s.get("id")}
+            if "pawpatrol" in valid_song_ids_from_data and "pawpatrol" not in self.user_progress["unlocked_song_ids"]:
+                 self.user_progress["unlocked_song_ids"].append("pawpatrol")
+
 
     def _save_user_progress(self):
         """Saves current user progress to JSON file."""
@@ -126,15 +158,15 @@ class MainWindow(QMainWindow):
             # Only save the relevant fields
             progress_to_save = {
                 "total_stars": self.user_progress.get("total_stars", 0),
-                "unlocked_song_ids": self.user_progress.get("unlocked_song_ids", DEFAULT_USER_PROGRESS["unlocked_song_ids"])
+                # Ensure unlocked_song_ids are unique before saving
+                "unlocked_song_ids": list(set(self.user_progress.get("unlocked_song_ids", DEFAULT_USER_PROGRESS["unlocked_song_ids"])))
             }
             with open(USER_PROGRESS_PATH, 'w', encoding='utf-8') as f:
                 json.dump(progress_to_save, f, indent=4)
             print(f"User progress saved to {USER_PROGRESS_PATH}.")
         except Exception as e:
             print(f"Error saving user progress file: {e}")
-            QMessageBox.warning(self, "保存失败", f"无法保存用户进度文件：{e}")
-
+            # QMessageBox.warning(self, "保存失败", f"无法保存用户进度文件：{e}") # Avoid showing too many popups
 
     # --- Slots ---
 
@@ -157,7 +189,7 @@ class MainWindow(QMainWindow):
             print("Switched to learning widget.")
         else:
             print(f"Error: Song data not found for ID '{song_id}'.")
-            QMessageBox.warning(self, "Error", f"Song data not found: {song_id}")
+            QMessageBox.warning(self, "错误", f"未找到歌曲数据：{song_id}")
 
 
     def on_back_to_song_select(self):
@@ -179,25 +211,26 @@ class MainWindow(QMainWindow):
 
     def on_stars_earned(self, stars):
         """Slot: Handles stars earned for a phrase."""
-        print(f"MainWindow received stars earned: {stars}")
+        print(f"MainWindow received stars earned for a phrase: {stars}")
         self.user_progress["total_stars"] = self.user_progress.get("total_stars", 0) + stars
         self._save_user_progress()
+        # Update the display on the learning widget immediately
         self.learning_widget.set_total_stars_display(self.user_progress.get("total_stars", 0))
-        # Optional: Trigger visual effect for gaining stars
+        # Optional: Trigger visual effect for gaining stars in LearningWidget if needed
 
-    # **修改槽函数：完善歌曲完成和解锁逻辑**
+
     def on_song_completed(self, song_id):
         """Slot: Handles a song completion event."""
         print(f"--- on_song_completed triggered for song ID: {song_id} ---")
         print(f"Current user progress before unlock check: {self.user_progress}")
 
-        # Song completion message is now shown in learning_widget itself
-        # We just handle unlocking and saving here.
-
+        # Check for new songs unlocked based on the NEW total stars
         unlocked_something = False
         print("Checking songs for unlock:")
         valid_song_ids = {s.get("id") for s in self.all_songs_data if s.get("id")} # Get valid IDs once
 
+        # Iterate through songs to find newly unlockable ones
+        newly_unlocked_titles = []
         for song_data in self.all_songs_data:
              current_song_id = song_data.get("id")
              # Ensure song_data has a valid ID and is not already unlocked
@@ -205,35 +238,37 @@ class MainWindow(QMainWindow):
                   required_stars = song_data.get("unlock_stars_required", sys.maxsize) # Use maxsize if requirement not set
                   current_stars = self.user_progress.get("total_stars", 0)
 
-                  print(f"  - Checking unlock for '{song_data.get('title', current_song_id)}': Current Stars = {current_stars}, Required Stars = {required_stars}")
+                  # print(f"  - Checking unlock for '{song_data.get('title', current_song_id)}': Current Stars = {current_stars}, Required Stars = {required_stars}")
 
                   if current_stars >= required_stars:
                        # Unlock this song
                        self.user_progress["unlocked_song_ids"].append(current_song_id)
                        unlocked_something = True
+                       newly_unlocked_titles.append(song_data.get('title', '新歌曲'))
                        print(f"    - SUCCESSFULLY Unlocked song: {song_data.get('title', current_song_id)}")
-                       # Show a message about unlocking
-                       QMessageBox.information(self, "新歌曲解锁！", f"恭喜！您解锁了歌曲：{song_data.get('title', '新歌曲')}！")
-                  else:
-                       print(f"    - Cannot unlock '{song_data.get('title', current_song_id)}': Not enough stars.")
+                  # else:
+                       # print(f"    - Cannot unlock '{song_data.get('title', current_song_id)}': Not enough stars.")
              # else: # Already unlocked or invalid song data, no action needed
-             #    print(f"  - Song '{song_data.get('title', current_song_id)}' is already unlocked or invalid.")
+             #    pass # print(f"  - Song '{song_data.get('title', current_song_id)}' is already unlocked or invalid or already unlocked.")
 
 
         if unlocked_something:
              print("Unlocking process completed. Saving progress.")
              self._save_user_progress() # Save progress after unlocking
+             # Show a message about unlocking any newly unlocked songs
+             if newly_unlocked_titles:
+                  QMessageBox.information(self, "新歌曲解锁！", f"恭喜！您解锁了以下歌曲：\n{', '.join(newly_unlocked_titles)}")
 
 
         print("--- on_song_completed finished ---")
 
 
-    # **新增槽函数：处理来自 SongSelectionWidget 的解锁请求**
     def on_try_unlock_song(self, song_id):
         """Slot: Handles unlock request from SongSelectionWidget."""
         print(f"MainWindow received unlock request for song ID: {song_id}")
         song_data = next((s for s in self.all_songs_data if s.get("id") == song_id), None)
 
+        # Check if song exists and is currently locked
         if song_data and song_id not in self.user_progress.get("unlocked_song_ids", []):
             required_stars = song_data.get("unlock_stars_required", sys.maxsize)
             current_stars = self.user_progress.get("total_stars", 0)
@@ -241,17 +276,16 @@ class MainWindow(QMainWindow):
             if current_stars >= required_stars:
                  # Perform unlock logic directly
                  self.user_progress["unlocked_song_ids"].append(song_id)
+                 # Optionally deduct stars here if unlock cost is involved (not in current spec)
                  print(f"Attempted unlock successful for song: {song_data.get('title', song_id)}")
-                 QMessageBox.information(self, "歌曲解锁！", f"恭喜！您解锁了歌曲：{song_data.get('title', '新歌曲')}！")
+                 QMessageBox.information(self, "歌曲解锁成功！", f"恭喜！您解锁了歌曲：{song_data.get('title', '新歌曲')}！")
                  self._save_user_progress()
                  # Notify the selection widget to update its display
                  self.song_selection_widget.update_ui_based_on_progress(self.user_progress)
             else:
-                print(f"Attempted unlock failed for song {song_id}: Not enough stars.")
-                # Message Box is shown in SongSelectionWidget's _try_unlock_song method
-
-
-        # No need to switch widgets here, user stays on song selection
+                # This case should ideally be prevented by button state, but good to handle
+                print(f"Attempted unlock failed for song {song_id}: Not enough stars ({current_stars} < {required_stars}).")
+                QMessageBox.information(self, "星星不足", f"解锁这首歌需要 ⭐ {required_stars} 颗星星，您还差 ⭐ {required_stars - current_stars} 颗。")
 
 
     def closeEvent(self, event):
@@ -260,23 +294,70 @@ class MainWindow(QMainWindow):
         self._save_user_progress()
         if self.learning_widget:
              # Make sure to call the child widget's closeEvent first for its cleanup
-             self.learning_widget.closeEvent(event)
+             # The LearningWidget's closeEvent will terminate PyAudio
+             self.learning_widget.closeEvent(event) # Pass the event to the child
 
-        super().closeEvent(event)
-        event.accept()
+        super().closeEvent(event) # Call parent class's closeEvent
+        # event.accept() # The default behavior is usually accept if not ignored earlier
 
 
 def main():
     app = QApplication(sys.argv)
+    # **新增：加载并应用 QSS 样式表**
+    if os.path.exists(QSS_PATH):
+        try:
+            with open(QSS_PATH, "r", encoding="utf-8") as f:
+                _style = f.read()
+                app.setStyleSheet(_style)   
+                print(f"Successfully loaded stylesheet: {QSS_PATH}")
+        except Exception as e:
+            print(f"Error loading stylesheet: {e}")
+    else:
+        print(f"Warning: Stylesheet file not found: {QSS_PATH}")
+
+
+
     main_window = MainWindow()
-    if not main_window.all_songs_data and os.path.exists(SONGS_DATA_PATH):
-         pass
-    elif not main_window.all_songs_data and not os.path.exists(SONGS_DATA_PATH):
-         QMessageBox.critical(None, "致命错误", f"歌曲数据文件未找到：\n{SONGS_DATA_PATH}\n应用程序将退出。")
-         sys.exit(1)
+
+    # MainWindow constructor already checks for data and exits if critical error
+    # So no need for redundant check here.
 
     main_window.show()
     sys.exit(app.exec())
 
 if __name__ == "__main__":
+    # Check if required libraries are installed before running
+    try:
+        import pyaudio
+        import numpy as np
+        import librosa
+        import scipy.signal
+        from PyQt6.QtWidgets import QMessageBox # Import here for early check
+    except ImportError as e:
+        msg = f"缺少必要的Python库，请安装：\n{e}\n\n运行以下命令安装:\npip install -r requirements.txt"
+        QMessageBox.critical(None, "缺少依赖", msg)
+        sys.exit(1)
+
+    # Check if main audio output device exists
+    # Note: This check might not be 100% reliable depending on OS/drivers,
+    # but gives a basic warning if no device is found at all.
+    if not QMediaDevices.defaultAudioOutput():
+         print("警告: 应用程序启动时未检测到默认音频输出设备。播放音频功能可能无法正常工作。")
+         # Optionally show a message box:
+         # QMessageBox.warning(None, "无音频输出设备", "未检测到默认音频输出设备。\n歌曲播放功能可能无法正常使用。")
+
+    # Check if a microphone input device exists
+    try:
+        p = pyaudio.PyAudio()
+        if p.get_device_count() == 0:
+             print("警告: 应用程序启动时未检测到任何音频输入设备 (麦克风)。录音功能将无法使用。")
+             # Optionally show a message box:
+             # QMessageBox.warning(None, "无音频输入设备", "未检测到麦克风设备。\n歌曲录音功能将无法使用。")
+        p.terminate() # Clean up the PyAudio instance used for the check
+    except Exception as e:
+         print(f"警告: 列举音频输入设备时发生错误: {e}. 录音功能可能无法使用。")
+         # Optionally show a message box:
+         # QMessageBox.warning(None, "麦克风设备错误", f"列举麦克风设备时发生错误：{e}\n录音功能可能无法使用。")
+
+
     main()
